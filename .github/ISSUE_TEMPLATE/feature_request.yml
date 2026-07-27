@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest something CineVerse should be able to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the situation rather than the solution — it usually leads somewhere better.
+      placeholder: We watch on very different connections and one side buffers constantly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What did you have in mind?
+      placeholder: A "wait for everyone" mode that pauses both sides while either is buffering.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you have tried or considered instead?

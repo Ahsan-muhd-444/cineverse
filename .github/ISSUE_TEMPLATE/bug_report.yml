@@ -1,0 +1,67 @@
+name: Bug report
+description: Something is not behaving the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more precisely you can
+        describe what happened, the faster it gets fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+      placeholder: I pressed pause and only my side stopped.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a room on a laptop
+        2. Join the same room from a phone
+        3. Load a video link
+        4. Press pause on the phone
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      options:
+        - Playback sync
+        - Video player
+        - Chat
+        - Voice or video call
+        - Rooms and host controls
+        - Layout or visual design
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: devices
+    attributes:
+      label: Devices and browsers involved
+      placeholder: Windows 11 / Chrome 126 laptop, Android 14 / Chrome phone
+    validations:
+      required: true
+
+  - type: input
+    id: source
+    attributes:
+      label: What were you watching?
+      description: Catalog title, a direct video URL, a YouTube link, or a local file.
+      placeholder: A direct .mp4 link
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: Anything in the browser console, if you checked.
+      render: shell
