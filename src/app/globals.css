@@ -1,0 +1,334 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   CineVerse — design tokens
+   Dark by default. Black canvas, glass surfaces, gradient light.
+   ========================================================================== */
+
+@layer base {
+  :root {
+    --ink-900: 9 9 9;
+    --ink-800: 18 18 18;
+
+    --accent-royal: 139 92 246;
+    --accent-abyss: 59 108 246;
+    --accent-electric: 34 211 238;
+
+    --glass-tint: 255 255 255;
+    --glass-alpha: 0.045;
+    --glass-border: 0.09;
+
+    --spotlight-x: 50%;
+    --spotlight-y: -10%;
+
+    --radius: 1rem;
+    --header-h: 4.5rem;
+
+    color-scheme: dark;
+  }
+
+  /* High contrast mode — accessible opt-in, toggled from Settings */
+  :root[data-contrast='high'] {
+    --glass-alpha: 0.14;
+    --glass-border: 0.42;
+  }
+  :root[data-contrast='high'] .text-white\/50,
+  :root[data-contrast='high'] .text-white\/55,
+  :root[data-contrast='high'] .text-white\/60,
+  :root[data-contrast='high'] .text-white\/65 {
+    color: rgb(255 255 255 / 0.92) !important;
+  }
+  :root[data-contrast='high'] .cv-aurora,
+  :root[data-contrast='high'] .cv-grain,
+  :root[data-contrast='high'] .cv-particles {
+    display: none !important;
+  }
+
+  * {
+    @apply border-white/10;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+    /* `clip` rather than `hidden`: it stops decorative full-bleed layers from
+       ever creating a sideways scroll, without breaking position: sticky. */
+    overflow-x: clip;
+  }
+
+  body {
+    @apply bg-ink-900 text-white antialiased;
+    font-feature-settings: 'ss01' 1, 'cv11' 1;
+    text-rendering: optimizeLegibility;
+    overflow-x: clip;
+    max-width: 100vw;
+  }
+
+  /* Keyboard users get a beautiful ring; mouse users don't */
+  :focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px rgb(var(--ink-900)),
+      0 0 0 4px rgb(var(--accent-electric) / 0.85);
+    border-radius: 0.6rem;
+  }
+
+  ::selection {
+    background: rgb(var(--accent-royal) / 0.4);
+    color: #fff;
+  }
+
+  /* Scrollbars, quietly premium */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.09);
+    border-radius: 99px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.2);
+    background-clip: content-box;
+  }
+
+  input,
+  textarea,
+  button,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Respect the user's motion preference — everywhere, no exceptions */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---------- Glass ---------- */
+  .glass {
+    background: linear-gradient(
+      160deg,
+      rgb(var(--glass-tint) / calc(var(--glass-alpha) * 1.9)) 0%,
+      rgb(var(--glass-tint) / var(--glass-alpha)) 42%,
+      rgb(255 255 255 / 0.015) 100%
+    );
+    border: 1px solid rgb(255 255 255 / var(--glass-border));
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    @apply shadow-glass;
+  }
+
+  .glass-soft {
+    background: rgb(255 255 255 / calc(var(--glass-alpha) * 0.7));
+    border: 1px solid rgb(255 255 255 / calc(var(--glass-border) * 0.75));
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+
+  .glass-deep {
+    background: linear-gradient(160deg, rgb(20 20 26 / 0.82), rgb(9 9 9 / 0.9));
+    border: 1px solid rgb(255 255 255 / var(--glass-border));
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    @apply shadow-lift;
+  }
+
+  /* A hairline highlight along the top edge — the "lit glass" trick */
+  .glass-lit::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.35) 22%,
+      rgb(255 255 255 / 0.55) 50%,
+      rgb(255 255 255 / 0.35) 78%,
+      transparent
+    );
+    pointer-events: none;
+  }
+
+  /* ---------- Animated gradient border ---------- */
+  .gradient-border {
+    position: relative;
+    isolation: isolate;
+  }
+  .gradient-border::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+      from var(--angle, 0deg),
+      rgb(var(--accent-royal) / 0.9),
+      rgb(var(--accent-abyss) / 0.9),
+      rgb(var(--accent-electric) / 0.9),
+      rgb(var(--accent-royal) / 0.9)
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.5s var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+    pointer-events: none;
+    z-index: 2;
+  }
+  .gradient-border:hover::after,
+  .gradient-border:focus-within::after,
+  .gradient-border[data-active='true']::after {
+    opacity: 1;
+    animation: border-spin 6s linear infinite;
+  }
+
+  /* ---------- Text ---------- */
+  .text-gradient {
+    background: linear-gradient(
+      104deg,
+      #ffffff 0%,
+      #e9e2ff 28%,
+      rgb(var(--accent-royal)) 55%,
+      rgb(var(--accent-electric)) 82%,
+      #ffffff 100%
+    );
+    background-size: 220% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .text-gradient-soft {
+    background: linear-gradient(180deg, #fff 25%, rgb(255 255 255 / 0.55) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* ---------- Ambient light ---------- */
+  .cv-aurora {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(90px);
+    will-change: transform;
+    pointer-events: none;
+  }
+
+  .cv-grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Cursor spotlight — driven by CSS vars set in JS (no re-renders) */
+  .cv-spotlight {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      520px circle at var(--spotlight-x) var(--spotlight-y),
+      rgb(var(--accent-royal) / 0.16),
+      rgb(var(--accent-abyss) / 0.07) 38%,
+      transparent 66%
+    );
+    transition: opacity 0.6s ease;
+  }
+
+  .vignette {
+    background: radial-gradient(120% 90% at 50% 0%, transparent 40%, rgb(0 0 0 / 0.75) 100%);
+  }
+
+  /* ---------- Loading ---------- */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: rgb(255 255 255 / 0.045);
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.08), transparent);
+    animation: shimmer 1.8s infinite;
+  }
+
+  /* ---------- Scroll helpers ---------- */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .edge-fade-x {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent);
+  }
+}
+
+@layer utilities {
+  .stack-3d {
+    transform-style: preserve-3d;
+    perspective: 1200px;
+  }
+  .will-transform {
+    will-change: transform, opacity;
+  }
+  .drag-none {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+  .balance {
+    text-wrap: balance;
+  }
+  .pretty {
+    text-wrap: pretty;
+  }
+}
+
+/* The custom property that powers the spinning gradient border */
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Range inputs used for seek + volume are fully custom-drawn in JS,
+   but keep native ones invisible-yet-operable for screen readers. */
+.sr-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+}
