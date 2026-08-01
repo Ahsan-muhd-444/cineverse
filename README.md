@@ -144,7 +144,10 @@ API keys, no accounts.
 | `npm run build` | Production build |
 | `npm start` | Production server |
 | `npm run typecheck` | Strict TypeScript, no emit |
-| `node scripts/e2e-realtime.js` | 39 realtime checks against a running server |
+| `npm test` | Unit suites (no server needed) |
+| `npm run validate:youtube-catalog` | Verify every recommended link live via YouTube oEmbed |
+| `node scripts/e2e-realtime.js` | 230+ realtime checks against a running server |
+| `npm run release:gate` | Full gate from cold: build, unit, E2E, process smoke |
 
 ## Deploying
 
@@ -183,9 +186,13 @@ src/
 │   ├── fx/                   Aurora fields, cursor spotlight, particle canvas
 │   ├── home/                 Hero, launchpad, showcase
 │   ├── browse/               Catalog explorer, cards, detail sheet
+│   ├── recommend/            Recommended-movies section and cards
 │   └── room/                 Player, chat, calls, participants, host controls
+├── data/                     Built-in recommendation catalog (verified official links)
 ├── hooks/                    useRoom, useSyncedPlayback, useWebRTC, useStartRoom
-└── lib/                      Types, catalog, storage, socket + clock alignment, helpers
+└── lib/                      Types, catalog, media, uploads, storage, socket + clock, helpers
+server/                       Upload availability, storage adapters, limits, headers, config
+scripts/                      Unit suites, realtime E2E, browser suites, release gate
 ```
 
 **State.** Room state is server-authoritative and held in memory: members, the
@@ -202,17 +209,26 @@ screen.
 
 ```bash
 npm run typecheck                 # strict TypeScript
+npm test                          # unit suites (no server needed)
 npm run build                     # production build
 node scripts/e2e-realtime.js      # realtime suite, needs a running server
+npm run release:gate              # everything above, from cold, on a free port
 ```
 
 The realtime suite drives the Socket.IO layer with simulated clients and asserts
-39 behaviours: room creation and probing, presence, source propagation,
+230+ behaviours: room creation and probing, presence, source propagation,
 play/pause/seek in both directions, server-side playhead extrapolation while
 playing and freezing while paused, chat delivery, typing, read receipts,
 reactions, input sanitising, WebRTC signalling relay, room locking, the
 passphrase gate, the waiting room approve/deny flow, kicking, host handover and
-departure. CI runs all of it on every push.
+departure, the shared-upload pipeline, and per-event rate limiting. A separate
+real-browser suite drives Chromium against a mock bucket to exercise the
+resumable upload engine end to end. CI runs all of it on every push.
+
+Grace-timer-driven assertions (host succession, orphaned-room closure, seat
+expiry) require `ROOM_RECONNECT_GRACE_MS` to be set on the **server** process,
+not only on the test client — otherwise the suite waits ~15 s against a 30 s
+default and those checks time out.
 
 ## Accessibility
 
@@ -228,8 +244,8 @@ departure. CI runs all of it on every push.
 
 ## Performance
 
-Route-level code splitting, lazy-loaded imagery, generated SVG poster art
-(no remote image requests, nothing to break), a particle canvas that pauses when
+Route-level code splitting, lazy-loaded imagery, artwork that falls back to
+generated SVG posters if a remote image ever fails, a particle canvas that pauses when
 the tab is hidden, and cursor effects written straight to CSS custom properties
 inside a `requestAnimationFrame` so pointer movement never triggers a React
 render.

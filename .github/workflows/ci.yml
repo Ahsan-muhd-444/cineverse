@@ -46,9 +46,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # ROOM_RECONNECT_GRACE_MS must be set on the SERVER, not only on the test
+      # client below: the grace timer that drives host succession, orphaned-room
+      # closure and seat expiry lives in this process. With the default 30s grace
+      # here, every grace-dependent assertion times out while the suite waits ~15s.
       - name: Start the server
         run: |
-          NODE_ENV=production PORT=3000 node server.js &
+          NODE_ENV=production ROOM_RECONNECT_GRACE_MS=500 PORT=3000 node server.js &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3000/healthz > /dev/null; then
               echo "server is up"
