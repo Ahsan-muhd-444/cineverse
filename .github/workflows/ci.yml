@@ -43,6 +43,14 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # The recommendation catalog links to third-party videos, so it can rot
+      # WITHOUT this repository changing: a video is removed, made private, has
+      # embedding disabled, or is re-uploaded to a different channel. Deploying a
+      # dead or non-official link is a product defect, so the gate refuses here.
+      # A network failure fails the step too — it must never pass by "skipping".
+      - name: Validate YouTube catalog (live)
+        run: npm run validate:youtube-catalog
+
       - name: Build
         run: npm run build
 
@@ -110,6 +118,20 @@ jobs:
           NODE_ENV: production
         run: npm run test:browser:direct:stress
 
+      # The shipped deployment mode: production with NO object storage. Proves in
+      # a real browser that uploads are disabled AND say so, and that a
+      # recommended movie still reaches BOTH members. Runs LAST and rebuilds
+      # first: the suites above boot the app with NODE_ENV=test, which runs Next
+      # in dev mode and recompiles `.next`, and this mode needs the production
+      # build intact. It starts no mock bucket, so nothing clobbers it again.
+      - name: Rebuild for the production demo suite
+        run: npm run build
+
+      - name: Demo-deployment browser suite (production, no S3)
+        env:
+          BROWSER_TEST_NO_SANDBOX: '1'
+        run: npm run test:browser:demo
+
       - name: Upload browser result artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -118,4 +140,5 @@ jobs:
           path: |
             .artifacts/browser/direct-results.json
             .artifacts/browser/direct-stress-results.json
+            .artifacts/browser/direct-demo-results.json
           if-no-files-found: warn

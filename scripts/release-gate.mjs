@@ -156,6 +156,25 @@ async function main() {
     await node(unitTestArgs(files));
   });
 
+  /*
+   * The recommendation catalog points at third-party videos, so it can break with
+   * no change to this repository: a video is removed, made private, has embedding
+   * turned off, or is re-uploaded under a different channel. Shipping a dead or
+   * no-longer-official link is a product defect, so the gate verifies every link
+   * LIVE before a release is called good.
+   *
+   * Deliberately NOT tolerant of a network failure: an unreachable YouTube makes
+   * this step fail rather than pass-by-skipping, because "we could not check" is
+   * not evidence that the links are fine.
+   */
+  await step('youtube catalog (live)', async () => {
+    try {
+      await npm(['run', 'validate:youtube-catalog']);
+    } catch (err) {
+      throw new Error(`YOUTUBE_CATALOG_VALIDATION_FAILED: ${err.message}`);
+    }
+  });
+
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   let server = null;

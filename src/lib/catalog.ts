@@ -188,14 +188,15 @@ const RAW_CATALOG: Movie[] = [
 ];
 
 /**
- * Real poster images for the titles that have an OFFICIAL one — the verified
- * thumbnail from each film's official upload (the Blender Foundation's YouTube
- * channel, confirmed via oEmbed). Titles with no entry keep the generated art
- * (`posterArt`); `MovieCard` swaps to it automatically on any load error, so a card
- * is never broken. The five "For Bigger …" clips are Google sample/test reels with
- * no official standalone upload, so they intentionally have no real poster.
+ * Artwork for the titles that have an official upload — the official YouTube
+ * thumbnail served for each film's own video on the Blender Foundation channel
+ * (confirmed via oEmbed). This is YouTube artwork for that upload, not a licensed
+ * movie poster. Titles with no entry keep the generated art (`posterArt`), and
+ * `MovieCard` falls back to it on any load error, so a card is never broken. The
+ * five "For Bigger …" clips are Google sample/test reels with no official
+ * standalone upload, so they intentionally have no thumbnail here.
  */
-const REAL_POSTERS: Record<string, string> = {
+const YOUTUBE_THUMBNAILS: Record<string, string> = {
   'big-buck-bunny': 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
   sintel: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
   'tears-of-steel': 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
@@ -204,8 +205,8 @@ const REAL_POSTERS: Record<string, string> = {
 
 export const CATALOG: Movie[] = RAW_CATALOG.map((m) => ({
   ...m,
-  poster: REAL_POSTERS[m.id] ?? m.poster,
-  backdrop: REAL_POSTERS[m.id] ?? m.backdrop,
+  poster: YOUTUBE_THUMBNAILS[m.id] ?? m.poster,
+  backdrop: YOUTUBE_THUMBNAILS[m.id] ?? m.backdrop,
 }));
 
 export const GENRES = Array.from(new Set(CATALOG.flatMap((m) => m.genres))).sort();

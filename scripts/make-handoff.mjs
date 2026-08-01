@@ -31,16 +31,29 @@ const ROOT = path.resolve(HERE, '..');
 const ARGS = process.argv.slice(2);
 const DRY_RUN = ARGS.includes('--dry-run');
 const FORCE = ARGS.includes('--force');
+/**
+ * The value following `flag`, but ONLY when it is a value rather than the next
+ * flag. `--zip --force` used to consume `--force` as the archive path, writing a
+ * file literally named `--force` into the repository; an option that silently
+ * eats the next switch is worse than one that simply defaults.
+ */
+function optionValue(flag) {
+  const i = ARGS.indexOf(flag);
+  if (i < 0) return null;
+  const next = ARGS[i + 1];
+  return next && !next.startsWith('--') ? next : null;
+}
+
 const OUT = (() => {
-  const i = ARGS.indexOf('--out');
-  if (i >= 0 && ARGS[i + 1]) return path.resolve(ARGS[i + 1]);
+  const value = optionValue('--out');
+  if (value) return path.resolve(value);
   return path.resolve(ROOT, '..', 'cineverse-handoff');
 })();
 /** Optional portable ZIP of the handoff output. Default: <out>.zip. */
 const ZIP = (() => {
-  const i = ARGS.indexOf('--zip');
-  if (i >= 0 && ARGS[i + 1]) return path.resolve(ARGS[i + 1]);
-  return ARGS.includes('--zip') ? `${OUT}.zip` : null;
+  if (!ARGS.includes('--zip')) return null;
+  const value = optionValue('--zip');
+  return value ? path.resolve(value) : `${OUT}.zip`;
 })();
 
 /* -------------------------------------------------------------------------- */
@@ -254,6 +267,12 @@ async function main() {
 
   if (path.resolve(OUT) === ROOT || OUT.startsWith(ROOT + path.sep)) {
     throw new Error(`refusing to write the handoff INSIDE the repo (${OUT}) — pick an --out outside it`);
+  }
+  // The archive is a deliverable, not a source file. Writing it into the working
+  // tree pollutes the very thing being packaged (and the next handoff would ship
+  // the previous archive).
+  if (ZIP && (path.resolve(ZIP) === ROOT || ZIP.startsWith(ROOT + path.sep))) {
+    throw new Error(`refusing to write the ZIP INSIDE the repo (${ZIP}) — pass a path outside it`);
   }
 
   if (!DRY_RUN) {

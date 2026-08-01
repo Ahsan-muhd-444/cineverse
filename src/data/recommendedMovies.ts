@@ -18,10 +18,12 @@
  * and BOTH members watch the same synced YouTube player — bytes never touch this
  * server. See `toYouTubeSource` below.
  *
- * POSTERS. `posterUrl`/`bannerUrl` are the official trailer's OWN YouTube thumbnail
- * (`i.ytimg.com`), which is rights-cleared for that upload and always available —
- * no scraping of Google Images. If a real metadata provider (e.g. TMDb) is wired in
- * later, swap the thumbnail helpers below for provider URLs; the shape is ready.
+ * ARTWORK. `posterUrl`/`bannerUrl` are the official YouTube thumbnail served by
+ * YouTube for that exact upload (`i.ytimg.com`) — i.e. YouTube trailer artwork for
+ * the video we link to, not a movie poster and not scraped from image search. The
+ * UI falls back to generated art if an image fails to load. If a metadata provider
+ * (e.g. TMDb) is wired in later, swap the helpers below for provider URLs and
+ * follow that provider's attribution terms; the shape is already right.
  */
 
 export type RecommendedLanguage = 'Punjabi' | 'Hindi' | 'English';

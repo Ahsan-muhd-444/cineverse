@@ -66,6 +66,7 @@ async function main() {
   if (!shape.ok) {
     log('SHAPE VALIDATION FAILED:');
     for (const e of shape.errors) log(`  ✗ ${e}`);
+    log('YOUTUBE_CATALOG_VALIDATION_FAILED');
     process.exit(1);
   }
   log('shape validation: PASS (ids/video-ids unique, size + per-region minimums, fields, enums, official)');
@@ -118,6 +119,9 @@ async function main() {
   if (failures.length) {
     log(`LIVE VALIDATION FAILED — ${failures.length} problem(s):`);
     for (const f of failures) log(`  ✗ ${f}`);
+    // A single grep-able marker for CI and the release gate. An unreachable
+    // network lands here too: "could not check" is a failure, never a skip.
+    log('YOUTUBE_CATALOG_VALIDATION_FAILED');
     process.exit(1);
   }
   log(`ALL ${RECOMMENDED_MOVIES.length} trailers + ${fullCount} official full movies PASS — every link is live, embeddable, and served by its recorded official channel.`);
@@ -126,5 +130,6 @@ async function main() {
 
 main().catch((err) => {
   console.error(`[youtube-catalog] fatal: ${err?.stack || err}`);
+  console.error('[youtube-catalog] YOUTUBE_CATALOG_VALIDATION_FAILED');
   process.exit(1);
 });

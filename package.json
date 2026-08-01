@@ -13,6 +13,7 @@
     "test:browser": "playwright test --config playwright.config.mjs",
     "test:browser:direct": "node scripts/browser/run-direct.mjs",
     "test:browser:direct:stress": "node scripts/browser/run-direct.mjs --stress",
+    "test:browser:demo": "node scripts/browser/run-direct.mjs --demo",
     "test:e2e:stress": "node scripts/e2e-stress.mjs",
     "test:soak": "node scripts/soak.mjs",
     "release:gate": "node scripts/release-gate.mjs",

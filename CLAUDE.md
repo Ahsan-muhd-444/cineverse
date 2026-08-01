@@ -270,7 +270,8 @@ source via `toYouTubeSource` → `{ type:'youtube', value:'<videoId>' }`; clicki
 one seeds a fresh room (`useStartRecommendation`) or sets the current room's
 source (SourcePicker **Recommended** tab → `source:set`), so both members watch
 the same synced player — YouTube bytes never touch this server. Posters are the
-trailer's own `i.ytimg.com` thumbnail (rights-cleared, no image scraping); swap
+official YouTube thumbnail for that upload (`i.ytimg.com`) — YouTube trailer
+artwork, not a movie poster, with a generated fallback image on load failure; swap
 for TMDb later without a shape change. UI: `src/components/recommend/`
 (`RecommendedMovies` section on home + browse, `RecommendationCard`).
 

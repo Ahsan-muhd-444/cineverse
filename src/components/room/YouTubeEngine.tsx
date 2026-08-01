@@ -3,7 +3,8 @@
 import * as React from 'react';
 import type { PlayerHandle, SyncAction } from '@/hooks/useSyncedPlayback';
 import { isNativeSeek, seekDebounceOk, shouldEmitNativeEvent } from './youtubeSync';
-import { YOUTUBE_IFRAME_ALLOW, YOUTUBE_PLAYER_VARS } from './youtubePlayerVars';
+import { youtubePlayerConfig } from './youtubePlayerVars';
+import { supportsElementFullscreen } from './fullscreen';
 import {
   hasUsableYouTubeApi,
   loadYouTubeApi,
@@ -193,6 +194,14 @@ export function YouTubeEngine({
       else player.unMute();
     };
 
+    /*
+     * Which fullscreen contract this platform gets. Resolved ONCE per player, at
+     * creation, from a real capability probe rather than user-agent sniffing:
+     * `playerVars` are only read when the player is constructed, and the
+     * capability cannot change mid-session.
+     */
+    const fsConfig = youtubePlayerConfig(supportsElementFullscreen(mountRef.current ?? null));
+
     // Force the GENERATED iframe to fill the frame and carry the permissions
     // YouTube's own embed uses. Without `allow` (autoplay/encrypted-media/…) some
     // videos render as a blank black frame with no error.
@@ -205,14 +214,25 @@ export function YouTubeEngine({
       iframe.style.height = '100%';
       iframe.style.border = '0';
       iframe.style.pointerEvents = interactiveRef.current ? 'auto' : 'none';
-      // `fullscreen` is deliberately ABSENT from this allow-list: CineVerse owns
-      // fullscreen for YouTube. A cross-origin iframe in native fullscreen
-      // cannot be overlaid by the parent, so the app's exit button would vanish
-      // and the viewer would be trapped. (`disablekb` stops YouTube even trying;
-      // this stops the browser granting it.)
-      iframe.setAttribute('allow', YOUTUBE_IFRAME_ALLOW);
-      iframe.removeAttribute('allowfullscreen');
-      (iframe as HTMLIFrameElement).allowFullscreen = false;
+      // `fullscreen` is deliberately ABSENT from this allow-list wherever the
+      // parent CAN take its own shell fullscreen: CineVerse owns fullscreen for
+      // YouTube, because a cross-origin iframe in native fullscreen cannot be
+      // overlaid by the parent, so the app's exit button would vanish and the
+      // viewer would be trapped. (`disablekb` stops YouTube even trying; this
+      // stops the browser granting it.)
+      //
+      // On a platform with NO element-level fullscreen (iPhone) that ownership is
+      // impossible, and withholding the permission left phone viewers with no
+      // fullscreen at all. There we grant it back — iOS uses the native player
+      // with its own Done control, so there is nothing to be trapped in.
+      iframe.setAttribute('allow', fsConfig.allow);
+      if (fsConfig.allowFullscreenAttribute) {
+        iframe.setAttribute('allowfullscreen', '');
+        (iframe as HTMLIFrameElement).allowFullscreen = true;
+      } else {
+        iframe.removeAttribute('allowfullscreen');
+        (iframe as HTMLIFrameElement).allowFullscreen = false;
+      }
     };
 
     loadYouTubeApi()
@@ -245,7 +265,7 @@ export function YouTubeEngine({
           // YouTube's OWN controls are the visible surface for play/pause/seek/
           // rate, but fullscreen (button, shortcut AND capability) belongs to
           // CineVerse — see youtubePlayerVars.ts for why each flag is there.
-          playerVars: { ...YOUTUBE_PLAYER_VARS },
+          playerVars: { ...fsConfig.playerVars },
           events: {
             onReady: () => {
               if (disposed) return;

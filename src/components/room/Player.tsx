@@ -27,8 +27,12 @@ import { cn, formatTime } from '@/lib/utils';
 import { resolveYouTubeId } from '@/lib/media';
 import { resolveDisplayedPosition, shouldShowHtml5Loading } from '@/hooks/playbackProjection';
 import {
+  enterVideoFullscreen,
+  exitAnyFullscreen,
+  fullscreenElementOf,
   isForeignFullscreen,
   isShellFullscreen,
+  requestElementFullscreen,
   shouldDisableIframePointerEvents,
   shouldShowFullscreenChrome,
 } from './fullscreen';
@@ -396,7 +400,9 @@ export function Player({
 
   React.useEffect(() => {
     const onChange = () => {
-      const element = document.fullscreenElement;
+      // Prefixed lookup: Safari reports `webkitFullscreenElement`, so reading only
+      // the unprefixed property left the UI convinced it was never fullscreen.
+      const element = fullscreenElementOf(document);
       // Only OUR shell counts. Treating any fullscreen element as ours is what
       // let a YouTube iframe hold fullscreen while the UI rendered its exit
       // button into a document nobody could see.
@@ -405,22 +411,58 @@ export function Player({
       // fullscreen, back out immediately — the parent cannot overlay a
       // cross-origin fullscreen element, so there would be no way out.
       if (isYouTube && isForeignFullscreen(shellRef.current, element)) {
-        document.exitFullscreen().catch(() => {
-          /* already exiting, or not permitted — nothing more we can do */
-        });
+        void exitAnyFullscreen(document);
       }
     };
     document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
+    document.addEventListener('webkitfullscreenchange', onChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      document.removeEventListener('webkitfullscreenchange', onChange);
+    };
   }, [isYouTube]);
 
+  /*
+   * iOS hands a video to the NATIVE player rather than the Fullscreen API, so no
+   * `fullscreenchange` ever fires. These two events are the only signal that the
+   * HTML5 video entered or left fullscreen there — without them the control bar
+   * would keep offering "Enter fullscreen" while the film was already full-screen.
+   */
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onBegin = () => setFullscreen(true);
+    const onEnd = () => setFullscreen(false);
+    video.addEventListener('webkitbeginfullscreen', onBegin);
+    video.addEventListener('webkitendfullscreen', onEnd);
+    return () => {
+      video.removeEventListener('webkitbeginfullscreen', onBegin);
+      video.removeEventListener('webkitendfullscreen', onEnd);
+    };
+  }, [isYouTube]);
+
+  /**
+   * Enter/leave fullscreen on every platform we ship to.
+   *
+   * The previous implementation called `shellRef.requestFullscreen()` only. On an
+   * iPhone that method does not exist, so the button did nothing at all — it
+   * worked on a laptop and silently failed on a phone. Now the shell is tried
+   * first (all desktops, Android, iPadOS via the webkit prefix), and when the
+   * platform has no element-level fullscreen we hand the HTML5 video to iOS's
+   * native player instead.
+   */
   const toggleFullscreen = React.useCallback(async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await shellRef.current?.requestFullscreen();
-    } catch {
-      /* some browsers refuse without a direct gesture */
+    const active = fullscreenElementOf(document);
+    const video = videoRef.current as (HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }) | null;
+    if (active || video?.webkitDisplayingFullscreen) {
+      await exitAnyFullscreen(document, video);
+      return;
     }
+    if (await requestElementFullscreen(shellRef.current)) return;
+    // No element fullscreen on this platform (iPhone). The video element is the
+    // only thing iOS will take fullscreen; a YouTube source has none exposed to
+    // us, so its own control is the path there (see youtubePlayerVars).
+    enterVideoFullscreen(videoRef.current);
   }, []);
 
   /* ---------------- fullscreen chrome (cursor + exit button) ----------------

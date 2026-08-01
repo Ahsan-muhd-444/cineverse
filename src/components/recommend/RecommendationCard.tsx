@@ -9,10 +9,11 @@ import { cn } from '@/lib/utils';
 import { hasFullMovie, type RecommendedMovie } from '@/data/recommendedMovies';
 
 /**
- * A recommendation card. 16:9 because the artwork IS the official trailer's own
- * YouTube thumbnail — honest about what it links to, and rights-cleared for that
- * upload. A broken image (rare — YouTube thumbnails are reliable) falls back to a
- * titled gradient so the card never renders empty.
+ * A recommendation card. 16:9 because the artwork IS the official YouTube
+ * thumbnail for the video we link to — YouTube trailer artwork, not a movie
+ * poster, which keeps the card honest about what a click actually plays. If the
+ * image fails to load the card renders a titled gradient fallback instead, so it
+ * is never empty and never broken.
  */
 export function RecommendationCard({
   movie,

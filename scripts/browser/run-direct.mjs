@@ -27,6 +27,12 @@ const ROOT = path.resolve(HERE, '..', '..');
 const APP_PORT = Number(process.env.BROWSER_TEST_PORT) || 3999;
 const BUCKET_PORT = Number(process.env.BROWSER_TEST_BUCKET_PORT) || 4998;
 const APP = `http://127.0.0.1:${APP_PORT}`;
+/**
+ * A SECOND app instance for the demo-deployment scenario: production, with no
+ * object storage at all. It must not share the mock-bucket stack's port or env.
+ */
+const DEMO_PORT = Number(process.env.BROWSER_TEST_DEMO_PORT) || 3997;
+const DEMO_APP = `http://127.0.0.1:${DEMO_PORT}`;
 const PART_SIZE = 8 * 1024 * 1024;
 const SINGLE_SHOT = 4 * 1024 * 1024;
 const MIB = 1024 * 1024;
@@ -36,10 +42,21 @@ const PART_COUNT = 3;
 const ARGS = process.argv.slice(2);
 const HEADED = ARGS.includes('--headed');
 const STRESS = ARGS.includes('--stress');
+/**
+ * Demo-deployment mode: production with NO object storage. Runs WITHOUT the mock
+ * bucket, because that stack boots the app with NODE_ENV=test — Next dev mode,
+ * which recompiles `.next` and destroys the production build this mode needs.
+ */
+const DEMO = ARGS.includes('--demo');
 const FILTER = (ARGS.find((a) => a.startsWith('--filter=')) || '').slice('--filter='.length);
 const RESULT_FILE =
   process.env.BROWSER_RESULT_FILE ||
-  path.join(ROOT, '.artifacts', 'browser', STRESS ? 'direct-stress-results.json' : 'direct-results.json');
+  path.join(
+    ROOT,
+    '.artifacts',
+    'browser',
+    DEMO ? 'direct-demo-results.json' : STRESS ? 'direct-stress-results.json' : 'direct-results.json',
+  );
 
 /* -------------------------------------------------------------------------- */
 /*  Browser resolution                                                        */
@@ -151,6 +168,67 @@ async function startStack(log) {
         /* already gone */
       }
       await bucket.close().catch(() => {});
+    },
+  };
+}
+
+/**
+ * Boot a SECOND app exactly as the current deployment runs it: production, with
+ * NO object storage, NO upload secret and NO explicit ceiling — so
+ * `getUploadAvailability` resolves to `disabled` and hosted uploads are off.
+ *
+ * Every S3/upload variable is deleted from the inherited environment rather than
+ * merely left unset: a developer with real credentials exported would otherwise
+ * silently flip this scenario into an ENABLED deployment and it would prove the
+ * opposite of what it claims.
+ */
+async function startDemoModeApp(log) {
+  const env = { ...process.env };
+  for (const key of [
+    'S3_ENDPOINT',
+    'S3_BUCKET',
+    'S3_ACCESS_KEY_ID',
+    'S3_SECRET_ACCESS_KEY',
+    'S3_REGION',
+    'S3_FORCE_PATH_STYLE',
+    'S3_PUBLIC_BASE_URL',
+    'UPLOAD_SECRET',
+    'MAX_UPLOAD_BYTES',
+    'UPLOAD_TEST_MODE',
+    'UPLOAD_TEST_BUCKET_ORIGIN',
+    'UPLOAD_TEST_SINGLE_SHOT_MAX_BYTES',
+  ]) {
+    delete env[key];
+  }
+  env.NODE_ENV = 'production';
+  env.PORT = String(DEMO_PORT);
+  env.HOST = '127.0.0.1';
+
+  const app = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env,
+  });
+  const appLog = [];
+  app.stdout.on('data', (d) => appLog.push(String(d)));
+  app.stderr.on('data', (d) => appLog.push(String(d)));
+
+  const ready = await waitForReady(`${DEMO_APP}/readyz`);
+  if (!ready) {
+    app.kill('SIGTERM');
+    throw new Error(`the demo-mode app did not become ready:\n${appLog.join('').slice(-2000)}`);
+  }
+  log(`demo-mode app (production, no S3) ready on ${DEMO_APP}`);
+
+  return {
+    origin: DEMO_APP,
+    log: () => appLog.join(''),
+    async stop() {
+      try {
+        app.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
     },
   };
 }
@@ -1090,6 +1168,110 @@ function scenarios({ browser, bucket }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Demo-deployment scenarios (--demo)                                         */
+/*                                                                            */
+/*  THE DEPLOYMENT MODE WE ARE SHIPPING: production with no object storage.    */
+/*  Hosted uploads must be off and SAY so, and the built-in recommendations    */
+/*  must still give two people something to watch together.                    */
+/*                                                                            */
+/*  A SEPARATE run mode, not another scenario in the list above, because the   */
+/*  mock-bucket stack boots the app with NODE_ENV=test — which runs Next in    */
+/*  DEV mode and recompiles `.next`, destroying the production build this      */
+/*  server needs. The two cannot share a working directory, so they do not     */
+/*  share a run.                                                              */
+/* -------------------------------------------------------------------------- */
+
+function demoScenarios({ browser }) {
+  const list = [];
+  const scenario = (name, fn) => list.push({ name, fn });
+
+  scenario('demo mode (production, no S3): uploads disabled, recommended movie plays for both', async () => {
+    const demo = await startDemoModeApp((m) => console.log(`[direct] ${m}`));
+    const memberCtx = await browser.newContext();
+    const partnerCtx = await browser.newContext();
+    const member = await memberCtx.newPage();
+    const partner = await partnerCtx.newPage();
+    const code = `DEMO${Math.floor(Math.random() * 90 + 10)}`;
+
+    /** Join a room on the DEMO origin (the shared helper is bound to APP). */
+    const joinDemoRoom = async (page, name) => {
+      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      const nameField = page.getByPlaceholder('Your name');
+      await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+      await nameField.fill(name);
+      await page.getByRole('button', { name: 'Take my seat' }).click();
+      await page
+        .getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ })
+        .first()
+        .waitFor({ timeout: 90_000 });
+    };
+
+    try {
+      // The server itself must have resolved the deployment as disabled.
+      ok(
+        /hosted uploads DISABLED \(mode: disabled\)/.test(demo.log()),
+        `the demo server did not report uploads disabled:\n${demo.log().slice(-800)}`,
+      );
+
+      await joinDemoRoom(member, 'Member');
+      await joinDemoRoom(partner, 'Partner');
+
+      /* ---- 1. the Local file tab states the limitation ---- */
+      await member.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().click();
+      const dialog = member.getByRole('dialog');
+      await dialog.waitFor({ state: 'visible', timeout: 30_000 });
+      await dialog.getByRole('tab', { name: /Local file/i }).click();
+
+      await dialog.getByText('Uploads are not available in this demo yet.').waitFor({ state: 'visible', timeout: 15_000 });
+      await dialog
+        .getByText('Built-in movie recommendations are available. Hosted uploads will be enabled later.')
+        .waitFor({ state: 'visible', timeout: 15_000 });
+
+      /* ---- 2. no usable upload affordance is exposed ---- */
+      eq(await dialog.locator('input[type="file"]').count(), 0, 'no file input in the disabled tab');
+      eq(
+        await dialog.getByRole('button', { name: /Choose a video from this device/i }).count(),
+        0,
+        'no upload button in the disabled tab',
+      );
+
+      /* ---- 3. a recommended movie still starts, for BOTH members ---- */
+      await dialog.getByRole('tab', { name: /Recommended/i }).click();
+      const firstPick = dialog.getByRole('button', { name: /Trailer|Full movie/i }).first();
+      await firstPick.waitFor({ state: 'visible', timeout: 15_000 });
+      await firstPick.click();
+      await dialog.waitFor({ state: 'hidden', timeout: 30_000 });
+
+      // The room source is a YouTube source: the player mounts a YouTube iframe.
+      const youtubeSrc = async (page) =>
+        waitForCondition(
+          async () => {
+            const src = await page.locator('iframe[src*="youtube.com/embed/"]').first().getAttribute('src').catch(() => null);
+            return Boolean(src);
+          },
+          { timeout: 45_000, label: 'a youtube embed is mounted' },
+        ).then(() => page.locator('iframe[src*="youtube.com/embed/"]').first().getAttribute('src'));
+
+      const memberSrc = await youtubeSrc(member);
+      const partnerSrc = await youtubeSrc(partner);
+
+      const videoId = (src) => (String(src).match(/\/embed\/([\w-]{11})/) || [])[1] || null;
+      ok(videoId(memberSrc), `member has no youtube video id: ${memberSrc}`);
+      // The PARTNER received the same source through the room, not by navigating.
+      eq(videoId(partnerSrc), videoId(memberSrc), 'partner plays the same YouTube video');
+
+      return { uploads: 'disabled', youtubeVideoId: videoId(memberSrc), partnerMatched: true };
+    } finally {
+      await memberCtx.close();
+      await partnerCtx.close();
+      await demo.stop();
+    }
+  });
+
+  return FILTER ? list.filter((s) => s.name.includes(FILTER)) : list;
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Stress scenarios (--stress)                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -1277,14 +1459,18 @@ async function main() {
   }
   const { chromium } = playwright;
 
-  const stack = await startStack(log);
+  // The demo mode deliberately runs with NO mock-bucket stack: it needs the
+  // PRODUCTION build intact, and that stack would recompile `.next` in dev mode.
+  const stack = DEMO ? null : await startStack(log);
   const { browser, channel, noSandbox } = await launchBrowser(chromium);
   log(`browser: ${channel}${noSandbox ? ' (--no-sandbox)' : ''} ${browser.version?.() ?? ''}`);
 
   const results = [];
   try {
-    const list = (STRESS ? stressScenarios : scenarios)({ browser, bucket: stack.bucket });
-    log(`${STRESS ? 'STRESS: ' : ''}${list.length} scenarios`);
+    const list = DEMO
+      ? demoScenarios({ browser })
+      : (STRESS ? stressScenarios : scenarios)({ browser, bucket: stack.bucket });
+    log(`${DEMO ? 'DEMO: ' : STRESS ? 'STRESS: ' : ''}${list.length} scenarios`);
     for (const { name, fn } of list) {
       const at = Date.now();
       try {
@@ -1299,13 +1485,13 @@ async function main() {
     }
   } finally {
     await browser.close().catch(() => {});
-    await stack.stop();
+    if (stack) await stack.stop();
   }
 
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;
   await writeResult({
-    runner: STRESS ? 'direct-stress' : 'direct',
+    runner: DEMO ? 'direct-demo' : STRESS ? 'direct-stress' : 'direct',
     browser: channel,
     startedAt: new Date(started).toISOString(),
     durationMs: Date.now() - started,
