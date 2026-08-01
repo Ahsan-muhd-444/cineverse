@@ -813,7 +813,10 @@ function finalizeRemoval(io, room, member, opts = {}) {
   clearUploadProgress(io, room, member.id);
 
   // The departing socket has already left the channel, so this reaches the rest.
-  io.to(room.code).emit('peer:left', { id: member.id });
+  // `reason: 'left'` is the seat being given up for good — the call layer may
+  // end the call. A dropped transport says 'transport' instead (see
+  // beginReconnectGrace), because that peer is coming back.
+  io.to(room.code).emit('peer:left', { id: member.id, reason: 'left' });
   const text = 'systemText' in opts ? opts.systemText : `${member.name} left the room`;
   if (text) systemMessage(io, room, text);
 
@@ -959,7 +962,10 @@ function beginReconnectGrace(io, socket) {
   if (typeof member.graceTimer.unref === 'function') member.graceTimer.unref();
 
   // Peers tear down their (now dead) media connection; presence keeps the seat.
-  io.to(room.code).emit('peer:left', { id: member.id });
+  // `reason: 'transport'` is what tells the call layer this is a blip, not a
+  // departure: it closes that one peer connection but keeps the call up so the
+  // member can be re-offered when they reclaim their seat.
+  io.to(room.code).emit('peer:left', { id: member.id, reason: 'transport' });
   broadcastPresence(io, room);
 }
 
@@ -1691,6 +1697,11 @@ app.prepare().then(() => {
         screen: Boolean(state.screen),
         inCall: Boolean(state.inCall),
       };
+      // Targeted rather than a full presence re-broadcast: this fires on every
+      // mute/camera/screen toggle, and clients merge it into the member they
+      // already hold (see `useRoom`'s rtc:state handler). The next presence —
+      // join, leave, disconnect — carries the same `media` from `publicMembers`,
+      // so the two can never drift.
       io.to(ctx.room.code).emit('rtc:state', { id: ctx.member.id, media: ctx.member.media });
     });
 

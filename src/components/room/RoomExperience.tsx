@@ -28,6 +28,7 @@ import { useSyncedPlayback, type PlayerHandle } from '@/hooks/useSyncedPlayback'
 import { Player } from './Player';
 import { Chat } from './Chat';
 import { CallDock } from './CallDock';
+import { CallAudio } from './CallAudio';
 import { SourcePicker, type UploadOptions } from './SourcePicker';
 import { ConnectionPill, Participants, ReactionLayer, RoomClock, RoomSettingsModal } from './SidePanels';
 import { Button, buttonClasses } from '@/components/ui/Button';
@@ -919,6 +920,17 @@ export function RoomExperience({ code }: { code: string }) {
           )}
         </AnimatePresence>
       </div>
+
+      {/*
+        Remote call audio, mounted OUTSIDE the collapsible side panel on purpose.
+        CallDock (and the only elements holding a remote stream) lives inside
+        `{panelOpen && …}` above, so "Hide side panel" used to unmount them: the
+        other person went silent while the dock, presence and rtc:state all still
+        reported an active call. These sinks render no layout — they are audio
+        elements plus an overlay button if autoplay is refused — so neither the
+        desktop rail nor the mobile Watch/Chat zones are affected.
+      */}
+      <CallAudio streams={call.remoteStreams} />
 
       {/* ---------- modals ---------- */}
       <SourcePicker

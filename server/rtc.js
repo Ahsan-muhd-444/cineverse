@@ -9,10 +9,13 @@
 
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice']);
 
-// An SDP offer/answer is a few KB; an ICE candidate is tiny. 64KB is generous
-// headroom for large SDPs (many codecs/candidates) while still being three
-// orders of magnitude below the 12MB socket buffer used for chat attachments.
-const MAX_SIGNAL_BYTES = 64 * 1024;
+// An SDP offer/answer is a few KB; an ICE candidate is tiny. The worst real
+// case is a non-trickle answer that inlines every candidate for a multi-track
+// call with the full codec set — tens of KB. 256KB leaves an order of magnitude
+// of headroom over that, and is still ~50x smaller than the socket buffer used
+// for chat attachments, so a rejected signal here can only ever be malicious or
+// malformed — never a legitimate video call being refused mid-handshake.
+const MAX_SIGNAL_BYTES = 256 * 1024;
 
 /**
  * @returns {{ok:true} | {ok:false, error:string}}

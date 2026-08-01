@@ -10,6 +10,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { io } = require('socket.io-client');
+// The relay's own size cap, so the oversized-signal check can never drift from it.
+const { MAX_SIGNAL_BYTES } = require('../server/rtc.js');
 
 const URL = process.env.TEST_URL || 'http://localhost:3000';
 const STARTED_AT = new Date();
@@ -1533,8 +1535,10 @@ async function main() {
   check('(rtc) an unsupported signal type is rejected',
     badTypeSig && badTypeSig.ok === false && badTypeSig.error === 'BAD_TYPE', badTypeSig && badTypeSig.error);
 
-  // (5) an oversized signal is rejected.
-  const bigOffer = { type: 'offer', sdp: { type: 'offer', sdp: 'x'.repeat(70 * 1024) } };
+  // (5) an oversized signal is rejected. DERIVED from the server's own cap —
+  // a hard-coded number here silently stops testing anything the moment the
+  // cap is raised to fit a bigger SDP.
+  const bigOffer = { type: 'offer', sdp: { type: 'offer', sdp: 'x'.repeat(MAX_SIGNAL_BYTES + 4096) } };
   const tooBigSig = await emit(rtcHost, 'rtc:signal', { to: rtcGuestId, data: bigOffer });
   check('(rtc) an oversized signal is rejected', tooBigSig && tooBigSig.ok === false && tooBigSig.error === 'TOO_LARGE',
     tooBigSig && tooBigSig.error);

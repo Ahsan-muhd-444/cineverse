@@ -144,8 +144,8 @@ test('a dropped offer or answer is retried, not ignored', () => {
   }
 });
 
-test('an unreachable peer is dropped immediately, whatever the signal type', () => {
-  for (const error of ['PEER_OFFLINE', 'NOT_MEMBER', 'UNAUTHORIZED', 'NO_RECIPIENT']) {
+test('a peer who is not in the room is dropped immediately, whatever the signal type', () => {
+  for (const error of ['NOT_MEMBER', 'UNAUTHORIZED', 'NO_RECIPIENT']) {
     for (const type of ['ice', 'offer', 'answer']) {
       assert.equal(
         classifySignalFailure({ type, error, consecutiveFailures: 1 }),
@@ -156,6 +156,19 @@ test('an unreachable peer is dropped immediately, whatever the signal type', () 
   }
 });
 
+test('PEER_OFFLINE is transient — the seat outlives the disconnect, so the call must too', () => {
+  // The server refuses relays to a member inside their reconnect grace window
+  // (two minutes in production). Treating that as fatal ended a two-person call
+  // on the FIRST candidate sent during a Wi-Fi handoff.
+  assert.equal(classifySignalFailure({ type: 'ice', error: 'PEER_OFFLINE', consecutiveFailures: 1 }), 'ignore');
+  assert.equal(classifySignalFailure({ type: 'offer', error: 'PEER_OFFLINE', consecutiveFailures: 1 }), 'retry');
+  // Still bounded: a peer that never comes back stops being retried.
+  assert.equal(
+    classifySignalFailure({ type: 'offer', error: 'PEER_OFFLINE', consecutiveFailures: SIGNAL_FAILURE_LIMIT }),
+    'drop',
+  );
+});
+
 test('sustained failure gives up on the peer instead of retrying forever', () => {
   assert.equal(
     classifySignalFailure({ type: 'offer', error: 'RATE_LIMITED', consecutiveFailures: SIGNAL_FAILURE_LIMIT }),
@@ -163,8 +176,8 @@ test('sustained failure gives up on the peer instead of retrying forever', () =>
   );
   assert.equal(
     classifySignalFailure({ type: 'ice', error: 'RATE_LIMITED', consecutiveFailures: SIGNAL_FAILURE_LIMIT }),
-    'drop',
-    'even ICE stops being ignorable once every single one is refused',
+    'ignore',
+    'ICE is never a reason to tear a call down — the limit check must not outrank the ICE exemption',
   );
 });
 

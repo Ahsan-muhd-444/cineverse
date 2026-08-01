@@ -27,6 +27,7 @@ import type {
   ConnectionQuality,
   LobbyEntry,
   MediaSource,
+  MediaState,
   Member,
   PartnerUploadProgress,
   RoomSettings,
@@ -492,6 +493,25 @@ export function useRoom(code: string, initialPassword?: string): RoomApi {
       setHostId(payload.hostId);
     };
 
+    /**
+     * Live call indicators (in call / muted / camera / screen) for the People
+     * panel. The server has always broadcast this, but nothing subscribed — so
+     * a member who was mid-call with their camera on still read as "Watching"
+     * and no toggle ever showed on the other side. Merged into the member we
+     * already hold rather than re-broadcasting presence on every mute, and the
+     * next presence carries the same `media` so the two cannot drift.
+     */
+    const onRtcState = (payload: { id: string; media: MediaState }) => {
+      if (!payload?.id || !payload.media) return;
+      setMembers((prev) => {
+        const index = prev.findIndex((m) => m.id === payload.id);
+        if (index === -1) return prev; // not (yet) a member we know about
+        const next = [...prev];
+        next[index] = { ...next[index], media: payload.media };
+        return next;
+      });
+    };
+
     const onMessage = (message: ChatMessage) => {
       setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
       setTyping((prev) => prev.filter((n) => n !== message.author));
@@ -572,6 +592,7 @@ export function useRoom(code: string, initialPassword?: string): RoomApi {
     socket.on('disconnect', onDisconnect);
     socket.on('upload:progress', onUploadProgress);
     socket.on('presence', onPresence);
+    socket.on('rtc:state', onRtcState);
     socket.on('message', onMessage);
     socket.on('chat:typing', onTyping);
     socket.on('chat:seen', onSeen);
@@ -592,6 +613,7 @@ export function useRoom(code: string, initialPassword?: string): RoomApi {
       socket.off('disconnect', onDisconnect);
       socket.off('upload:progress', onUploadProgress);
       socket.off('presence', onPresence);
+      socket.off('rtc:state', onRtcState);
       socket.off('message', onMessage);
       socket.off('chat:typing', onTyping);
       socket.off('chat:seen', onSeen);

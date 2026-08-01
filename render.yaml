@@ -25,3 +25,15 @@ services:
       # so the deployed value is visible and tunable without a code change.
       - key: ROOM_RECONNECT_GRACE_MS
         value: "120000"
+      # Voice/video ICE servers. NOT set here because a TURN relay needs real
+      # credentials, which must never live in this file — add it in the Render
+      # dashboard as a JSON array, e.g.
+      #   [{"urls":"stun:stun.l.google.com:19302"},
+      #    {"urls":"turn:turn.example.com:3478","username":"…","credential":"…"}]
+      #
+      # Two things to know before relying on it:
+      #  * NEXT_PUBLIC_* is inlined by Next at BUILD time, so adding it to the
+      #    dashboard requires a redeploy — it will not reach an existing bundle.
+      #  * With no TURN the app falls back to public STUN, which cannot relay
+      #    media: behind symmetric NAT / CGNAT (most mobile carriers) the
+      #    handshake completes and no audio or video ever arrives.

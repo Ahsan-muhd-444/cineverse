@@ -451,6 +451,35 @@ async function waitForNoText(scope, pattern, { timeout = 60_000 } = {}) {
   }
 }
 
+/**
+ * Write a small looping Y4M clip for Chrome's `--use-file-for-fake-video-capture`
+ * and return its path.
+ *
+ * Twelve frames with a band that moves every frame, so the encoder always has
+ * something to send: a frozen image would still produce keyframes, but a moving
+ * one makes "bytes are still growing" a meaningful assertion.
+ */
+function writeFakeCameraClip() {
+  const W = 320;
+  const H = 180;
+  const FRAMES = 12;
+  const file = path.join(os.tmpdir(), `cineverse-fake-camera-${W}x${H}.y4m`);
+  const chunks = [Buffer.from(`YUV4MPEG2 W${W} H${H} F20:1 It A1:1 C420mpeg2\n`, 'ascii')];
+  for (let f = 0; f < FRAMES; f += 1) {
+    const y = Buffer.alloc(W * H, 32);
+    const band = Math.floor((f / FRAMES) * H);
+    for (let row = band; row < Math.min(H, band + H / 6); row += 1) y.fill(220, row * W, row * W + W);
+    chunks.push(
+      Buffer.from('FRAME\n', 'ascii'),
+      y,
+      Buffer.alloc((W / 2) * (H / 2), 90 + f * 8),
+      Buffer.alloc((W / 2) * (H / 2), 200 - f * 8),
+    );
+  }
+  fs.writeFileSync(file, Buffer.concat(chunks));
+  return file;
+}
+
 /** Poll an async predicate until it is true, or time out. */
 async function waitForCondition(fn, { timeout = 60_000, label = '' } = {}) {
   const deadline = Date.now() + timeout;
@@ -1500,7 +1529,20 @@ function demoScenarios({ browser }) {
       await dialog.getByRole('tab', { name: /Recommended/i }).click();
       await dialog.getByRole('button', { name: /Trailer|Full movie/i }).first().click();
       await dialog.waitFor({ state: 'hidden', timeout: 30_000 });
-      await page.waitForTimeout(1500);
+      /*
+       * Wait for the film to BE there before measuring it.
+       *
+       * The YouTube iframe is mounted only once the IFrame API script has
+       * loaded — measured at ~2.5s on a warm machine, well past the fixed 1.5s
+       * sleep this used to use, which made the very first assertion fail with
+       * "player is only 0px tall" while the room was showing its normal
+       * "Loading YouTube…" affordance. Every geometry assertion below is
+       * unchanged; only the timing-based wait is gone.
+       */
+      await waitForCondition(async () => (await zones()).playerH > 0, {
+        timeout: 45_000,
+        label: 'the film is mounted before the room is measured',
+      });
 
       /* ---- A. WATCH MODE: a real cinema screen, chat visible below ---- */
       const watch = await zones();
@@ -1594,6 +1636,445 @@ function demoScenarios({ browser }) {
       };
     } finally {
       await ctx.close();
+      await demo.stop();
+    }
+  });
+
+  /*
+   * REAL MEDIA BETWEEN TWO BROWSERS — not a label that says "Connected".
+   *
+   * An ICE-connected call carrying nothing renders exactly the same dock as a
+   * working one, so every UI-level assertion about calls is satisfied by the
+   * failure mode it is supposed to catch. This scenario reads the RECEIVING
+   * page's own media plumbing instead:
+   *
+   *  - every <audio>/<video> element's `srcObject`, its tracks and its `muted`
+   *    flag — the element that is actually supposed to make sound;
+   *  - each track cross-checked against that page's RTCPeerConnection
+   *    RECEIVERS, so a track only counts as "remote" if it genuinely arrived
+   *    over the wire (a local preview track can never satisfy it);
+   *  - inbound-rtp byte/packet counters, because a remote track is 'live' from
+   *    the moment the m-line is negotiated — BYTES are what prove media flowed.
+   *
+   * It owns a dedicated browser because Chromium needs fake capture devices to
+   * run a call without hardware, and the shared launchBrowser() must keep
+   * launching a normal browser for every other scenario.
+   */
+  scenario('two-browser call: voice, video and screen share reach the other side', async () => {
+    let playwright;
+    try {
+      playwright = await import('playwright');
+    } catch {
+      playwright = await import('@playwright/test');
+    }
+    const { chromium } = playwright;
+
+    const needsNoSandbox =
+      process.env.BROWSER_TEST_NO_SANDBOX === '1' ||
+      (process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0);
+
+    const launchOptions = {
+      headless: !HEADED,
+      args: [
+        ...(needsNoSandbox ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
+        // Auto-accept the permission prompt, feed a synthetic camera/mic, let
+        // the remote <audio> sink autoplay, and answer the screen-share picker.
+        '--use-fake-ui-for-media-stream',
+        '--use-fake-device-for-media-stream',
+        '--autoplay-policy=no-user-gesture-required',
+        '--auto-select-desktop-capture-source=Entire screen',
+        /*
+         * Drive the fake CAMERA from a file rather than Chrome's built-in
+         * pattern generator. Measured on Chrome/Edge 150: the built-in fake
+         * camera hands back a 2x2 track that goes `ended` a few seconds later
+         * on its own, so a perfectly healthy video call would be reported as
+         * broken by this very test. The audio half of the fake device is fine
+         * and is still used. This is a harness workaround for a browser bug —
+         * the media still travels the real capture → encode → RTP → decode path.
+         */
+        `--use-file-for-fake-video-capture=${writeFakeCameraClip()}`,
+      ],
+    };
+    /*
+     * Same bundled-then-system resolution the shared launcher uses (which is
+     * deliberately left untouched — it must keep launching a browser with no
+     * fake devices for every other scenario).
+     */
+    const launchMediaBrowser = async () => {
+      let firstError;
+      try {
+        return { browser: await chromium.launch(launchOptions), channel: 'bundled chromium' };
+      } catch (err) {
+        firstError = err;
+      }
+      for (const channel of ['chrome', 'msedge', 'chromium']) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          return { browser: await chromium.launch({ ...launchOptions, channel }), channel: `system ${channel}` };
+        } catch {
+          /* try the next channel */
+        }
+      }
+      throw new Error(`no usable Chromium for the media browser: ${firstError?.message || firstError}`);
+    };
+
+    const demo = await startDemoModeApp((m) => console.log(`[direct] ${m}`));
+    let mediaBrowser = null;
+    try {
+      const launched = await launchMediaBrowser();
+      mediaBrowser = launched.browser;
+      console.log(`[direct] media browser: ${launched.channel} (fake camera/mic)`);
+
+      const code = `CALL${Math.floor(Math.random() * 90 + 10)}`;
+      const ctxA = await mediaBrowser.newContext();
+      const ctxB = await mediaBrowser.newContext();
+      const grants = ['microphone', 'camera'];
+      await ctxA.grantPermissions(grants, { origin: demo.origin });
+      await ctxB.grantPermissions(grants, { origin: demo.origin });
+
+      /*
+       * Remember every RTCPeerConnection the page constructs, before any app
+       * script runs. This is the only way to tell a RECEIVED track from a local
+       * one by identity rather than by guessing from which element holds it.
+       */
+      const trackPeerConnections = () => {
+        const Orig = window.RTCPeerConnection;
+        if (!Orig) return;
+        const all = [];
+        window.__rtcPeers = all;
+        class TrackedPeerConnection extends Orig {
+          constructor(...args) {
+            super(...args);
+            all.push(this);
+          }
+        }
+        window.RTCPeerConnection = TrackedPeerConnection;
+      };
+      await ctxA.addInitScript(trackPeerConnections);
+      await ctxB.addInitScript(trackPeerConnections);
+
+      const a = await ctxA.newPage();
+      const b = await ctxB.newPage();
+
+      const joinDemoRoom = async (page, name) => {
+        await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+        const nameField = page.getByPlaceholder('Your name');
+        await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+        await nameField.fill(name);
+        await page.getByRole('button', { name: 'Take my seat' }).click();
+        await page
+          .getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ })
+          .first()
+          .waitFor({ timeout: 90_000 });
+      };
+
+      /** Everything this page is really receiving, read from the page itself. */
+      const mediaSnapshot = (page) =>
+        page.evaluate(() => {
+          const all = window.__rtcPeers || [];
+          const open = all.filter((pc) => pc.signalingState !== 'closed');
+          const remoteTrackIds = new Set();
+          open.forEach((pc) =>
+            pc.getReceivers().forEach((r) => {
+              if (r.track) remoteTrackIds.add(r.track.id);
+            }),
+          );
+          const elements = [...document.querySelectorAll('audio, video')].map((el) => {
+            const src = el.srcObject;
+            const tracks = src && typeof src.getTracks === 'function' ? src.getTracks() : [];
+            return {
+              tag: el.tagName.toLowerCase(),
+              muted: el.muted,
+              paused: el.paused,
+              tracks: tracks.map((t) => ({
+                kind: t.kind,
+                id: t.id,
+                readyState: t.readyState,
+                trackMuted: t.muted,
+                enabled: t.enabled,
+                remote: remoteTrackIds.has(t.id),
+              })),
+            };
+          });
+          return {
+            totalPeerConnections: all.length,
+            openPeerConnections: open.length,
+            connectionStates: open.map((pc) => pc.connectionState),
+            iceStates: open.map((pc) => pc.iceConnectionState),
+            elements,
+          };
+        });
+
+      /**
+       * DISTINCT live remote tracks of one kind, each with every element that
+       * carries it. Deduplicated by track id on purpose: one peer stream is
+       * attached to both the tile and the audio sink, and counting the elements
+       * instead of the tracks would report one voice as two.
+       */
+      const remoteLive = (snap, kind) => {
+        const byId = new Map();
+        snap.elements.forEach((el) =>
+          el.tracks.forEach((t) => {
+            if (!t.remote || t.kind !== kind || t.readyState !== 'live') return;
+            const entry = byId.get(t.id) || { ...t, sinks: [] };
+            entry.sinks.push({ tag: el.tag, muted: el.muted, paused: el.paused });
+            byId.set(t.id, entry);
+          }),
+        );
+        return [...byId.values()];
+      };
+
+      /** A live remote track carried by an element that is actually audible. */
+      const audibleRemoteAudio = (snap) =>
+        remoteLive(snap, 'audio').filter((t) => t.sinks.some((s) => s.tag === 'audio' && s.muted === false));
+
+      /**
+       * Inbound RTP: bytes and decoded frames are the only proof media flowed,
+       * and the decoded FRAME SIZE is what tells a 320x180 camera clip apart
+       * from a 1280x720 screen capture on a connection that never renegotiates.
+       */
+      const inboundRtp = (page) =>
+        page.evaluate(async () => {
+          const totals = {
+            audio: { packets: 0, bytes: 0 },
+            video: { packets: 0, bytes: 0, framesDecoded: 0, frameWidth: 0, frameHeight: 0 },
+          };
+          for (const pc of window.__rtcPeers || []) {
+            if (pc.signalingState === 'closed') continue;
+            // eslint-disable-next-line no-await-in-loop
+            const report = await pc.getStats();
+            report.forEach((entry) => {
+              if (entry.type !== 'inbound-rtp' || !totals[entry.kind]) return;
+              totals[entry.kind].packets += entry.packetsReceived || 0;
+              totals[entry.kind].bytes += entry.bytesReceived || 0;
+              if (entry.kind !== 'video') return;
+              totals.video.framesDecoded += entry.framesDecoded || 0;
+              if (entry.frameWidth) {
+                totals.video.frameWidth = entry.frameWidth;
+                totals.video.frameHeight = entry.frameHeight;
+              }
+            });
+          }
+          return totals;
+        });
+
+      /**
+       * Wait until `page` really is receiving media of `kind`: a live remote
+       * track on a sink, inbound bytes, and then MORE inbound bytes. The second
+       * reading matters — a single packet proves a handshake, a growing counter
+       * proves a stream.
+       */
+      const awaitRemoteMedia = async (page, kind, label, { timeout = 60_000, audible = false } = {}) => {
+        let first = null;
+        await waitForCondition(
+          async () => {
+            const snap = await mediaSnapshot(page);
+            const tracks = audible ? audibleRemoteAudio(snap) : remoteLive(snap, kind);
+            if (tracks.length === 0) return false;
+            const stats = await inboundRtp(page);
+            if (stats[kind].bytes <= 0) return false;
+            // For video, wait for the decoder too: frame counters and the frame
+            // SIZE are reported a beat after the first bytes, and reading them
+            // early would compare against a zero.
+            if (kind === 'video' && !(stats.video.framesDecoded > 0 && stats.video.frameWidth > 0)) return false;
+            first = { tracks, stats, snap };
+            return true;
+          },
+          { timeout, label },
+        );
+        let last = first;
+        await waitForCondition(
+          async () => {
+            const stats = await inboundRtp(page);
+            if (stats[kind].bytes <= first.stats[kind].bytes) return false;
+            last = { ...first, stats, snap: await mediaSnapshot(page) };
+            return true;
+          },
+          { timeout: 30_000, label: `${label} (keeps flowing)` },
+        );
+        return { ...last, firstBytes: first.stats[kind].bytes };
+      };
+
+      const evidence = {};
+
+      try {
+        /* ---- 1. two real users, same room ---- */
+        await joinDemoRoom(a, 'Ava');
+        await joinDemoRoom(b, 'Ben');
+        // Both sides must see two members before a call can route anywhere.
+        for (const page of [a, b]) {
+          // eslint-disable-next-line no-await-in-loop
+          await page
+            .locator('aside[aria-label="Room side panel"]')
+            .getByRole('tab', { name: /People · 2/ })
+            .waitFor({ state: 'visible', timeout: 60_000 });
+        }
+        evidence.step1 = 'both pages reached the room UI and see 2 members';
+
+        /* ---- 2. A starts VOICE ---- */
+        await a.getByRole('button', { name: 'Voice', exact: true }).click();
+        await a.getByRole('button', { name: 'End call', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
+        evidence.step2 = 'A clicked the Voice control; the dock switched to its in-call controls (End call visible)';
+
+        /* ---- 3. B is really receiving A's voice ---- */
+        const bAudio = await awaitRemoteMedia(b, 'audio', "B receives A's voice", { timeout: 60_000, audible: true });
+        eq(bAudio.tracks.length, 1, "B's live remote audio tracks");
+        const bSink = bAudio.tracks[0].sinks.find((s) => s.tag === 'audio' && s.muted === false);
+        ok(bSink, `B's remote audio is on no unmuted <audio> sink: ${JSON.stringify(bAudio.tracks[0].sinks)}`);
+        eq(bAudio.tracks[0].readyState, 'live', "B's remote audio track");
+        evidence.step3 = `B had 1 live remote audio track (receiver-confirmed) carried by an <audio> element with muted=${bSink.muted}, paused=${bSink.paused}; inbound audio grew ${bAudio.firstBytes} -> ${bAudio.stats.audio.bytes} bytes / ${bAudio.stats.audio.packets} packets`;
+
+        /* ---- 4. B joins the voice call; A receives B ---- */
+        const accept = b.getByRole('button', { name: 'Accept call', exact: true });
+        const startedVia = (await accept.count()) > 0 ? 'Accept call' : 'Voice';
+        if (startedVia === 'Accept call') await accept.click();
+        else await b.getByRole('button', { name: 'Voice', exact: true }).click();
+        await b.getByRole('button', { name: 'End call', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
+
+        const aAudio = await awaitRemoteMedia(a, 'audio', "A receives B's voice", { timeout: 60_000, audible: true });
+        eq(aAudio.tracks.length, 1, "A's live remote audio tracks");
+        const aSink = aAudio.tracks[0].sinks.find((s) => s.tag === 'audio' && s.muted === false);
+        ok(aSink, `A's remote audio is on no unmuted <audio> sink: ${JSON.stringify(aAudio.tracks[0].sinks)}`);
+        evidence.step4 = `B started voice via the "${startedVia}" control; A had 1 live remote audio track (receiver-confirmed) on an <audio> element with muted=${aSink.muted}; inbound audio grew ${aAudio.firstBytes} -> ${aAudio.stats.audio.bytes} bytes / ${aAudio.stats.audio.packets} packets`;
+
+        /* ---- 5. A turns the camera on; B receives real video ---- */
+        await a.getByRole('button', { name: 'Turn camera on', exact: true }).click();
+        await a.getByRole('button', { name: 'Turn camera off', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
+        const bVideo = await awaitRemoteMedia(b, 'video', "B receives A's camera", { timeout: 60_000 });
+        eq(bVideo.tracks.length, 1, "B's live remote video tracks");
+        ok(bVideo.stats.video.framesDecoded > 0, 'B decoded no video frames at all');
+        // The camera clip is 320 wide. Pin it, so the screen-share step below can
+        // prove the picture CHANGED source on a connection that never renegotiates.
+        const cameraFrame = `${bVideo.stats.video.frameWidth}x${bVideo.stats.video.frameHeight}`;
+        eq(bVideo.stats.video.frameWidth, 320, "B's decoded frame width (the camera clip is 320 wide)");
+        evidence.step5 = `B had 1 live remote video track (receiver-confirmed), decoded ${bVideo.stats.video.framesDecoded} frames at ${cameraFrame}; inbound video grew ${bVideo.firstBytes} -> ${bVideo.stats.video.bytes} bytes / ${bVideo.stats.video.packets} packets`;
+
+        const beforeShare = await mediaSnapshot(b);
+        const beforeShareStats = await inboundRtp(b);
+
+        /* ---- 6. A shares the screen; B still has live video ---- */
+        await a.getByRole('button', { name: 'Share screen', exact: true }).click();
+        await a.getByRole('button', { name: 'Stop screen share', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
+        // A's own proof the capture is running: the dedicated "Your screen" tile.
+        await a.getByText('Your screen', { exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+
+        /*
+         * A screen share REPLACES the camera on the same sender, so B's track id,
+         * m-line and SSRC are all unchanged — the only thing that can prove the
+         * screen's pixels arrived is the decoded frame size, which jumps from the
+         * 320x180 camera clip to the captured display.
+         */
+        let shareStats = null;
+        await waitForCondition(
+          async () => {
+            const snap = await mediaSnapshot(b);
+            if (remoteLive(snap, 'video').length === 0) return false;
+            const stats = await inboundRtp(b);
+            shareStats = stats;
+            return (
+              stats.video.bytes > beforeShareStats.video.bytes &&
+              stats.video.framesDecoded > beforeShareStats.video.framesDecoded &&
+              stats.video.frameWidth > bVideo.stats.video.frameWidth
+            );
+          },
+          { timeout: 60_000, label: "B decodes A's screen (frame size grows past the camera clip)" },
+        );
+        const shareSnap = await mediaSnapshot(b);
+        eq(remoteLive(shareSnap, 'video').length, 1, "B's live remote video tracks while A shares");
+        evidence.step6 = `B still had 1 live remote video track while A shared; decoded frame size changed ${cameraFrame} -> ${shareStats.video.frameWidth}x${shareStats.video.frameHeight} (the captured display), frames ${beforeShareStats.video.framesDecoded} -> ${shareStats.video.framesDecoded}, bytes ${beforeShareStats.video.bytes} -> ${shareStats.video.bytes}`;
+
+        /* ---- 7. A stops sharing; B's connection must not drop ---- */
+        await a.getByRole('button', { name: 'Stop screen share', exact: true }).click();
+        await a.getByRole('button', { name: 'Share screen', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+
+        // Watch for ~8s: the connection must stay connected the whole time, and
+        // no NEW RTCPeerConnection may be built (a rebuild IS a dropped call).
+        const watchUntil = Date.now() + 8000;
+        let settled = null;
+        while (Date.now() < watchUntil) {
+          // eslint-disable-next-line no-await-in-loop
+          settled = await mediaSnapshot(b);
+          ok(
+            settled.connectionStates.includes('connected'),
+            `B's peer connection left "connected" after the share stopped: ${JSON.stringify(settled.connectionStates)}`,
+          );
+          ok(
+            !settled.connectionStates.some((s) => s === 'failed' || s === 'closed'),
+            `B's peer connection failed after the share stopped: ${JSON.stringify(settled.connectionStates)}`,
+          );
+          eq(
+            settled.totalPeerConnections,
+            beforeShare.totalPeerConnections,
+            "B's peer connection was rebuilt (the call dropped)",
+          );
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        // Audio — the thing a voice call is for — must still be flowing.
+        const afterStop = await inboundRtp(b);
+        ok(afterStop.audio.bytes > bAudio.stats.audio.bytes, "B's audio stopped flowing after the share ended");
+        /*
+         * The video may legitimately settle either way (see planScreenShareEnd):
+         * the camera is restored when it is on and live, otherwise the sender is
+         * emptied and B's tile falls back to the avatar. Wait for it to settle
+         * into ONE of those two and record WHICH — do not guess at which, and do
+         * not read a single sample while the switch is still in flight.
+         */
+        let videoAfter = [];
+        let cameraRestored = false;
+        let videoCleared = false;
+        await waitForCondition(
+          async () => {
+            const snap = await mediaSnapshot(b);
+            const stats = await inboundRtp(b);
+            // The connection must still be up while we wait for the picture.
+            ok(
+              snap.connectionStates.includes('connected'),
+              `B's peer connection dropped while the video settled: ${JSON.stringify(snap.connectionStates)}`,
+            );
+            videoAfter = remoteLive(snap, 'video');
+            cameraRestored = stats.video.frameWidth === bVideo.stats.video.frameWidth;
+            videoCleared = videoAfter.length === 0 || videoAfter.every((t) => t.trackMuted === true);
+            Object.assign(afterStop, stats);
+            return cameraRestored || videoCleared;
+          },
+          { timeout: 30_000, label: "B's video settles after the share stops" },
+        );
+        evidence.step7 = `B stayed connected for 8s (states ${JSON.stringify(settled.connectionStates)}) on the same ${settled.totalPeerConnections} RTCPeerConnection as before the share; audio kept flowing to ${afterStop.audio.bytes} bytes; video settled to ${cameraRestored ? `the camera (${afterStop.video.frameWidth}x${afterStop.video.frameHeight})` : 'cleared'} with ${videoAfter.length} live remote video track(s)`;
+
+        /* ---- 8. A leaves the call; B's UI no longer shows A in the call ---- */
+        const bPanel = b.locator('aside[aria-label="Room side panel"]');
+        await bPanel.getByRole('tab', { name: /People/ }).click();
+        const bPeople = bPanel.locator('text=In the room').locator('xpath=..');
+        await waitForText(bPeople, /In call/, { timeout: 20_000, label: "B's People panel before A leaves" });
+
+        await a.getByRole('button', { name: 'End call', exact: true }).click();
+
+        // No remote media left anywhere on B's page.
+        await waitForCondition(
+          async () => {
+            const snap = await mediaSnapshot(b);
+            return remoteLive(snap, 'audio').length === 0 && remoteLive(snap, 'video').length === 0;
+          },
+          { timeout: 45_000, label: "B's remote media is gone after A left" },
+        );
+        // B's own call ended too, so the dock is back to its idle controls.
+        await b.getByRole('button', { name: 'Voice', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
+        // And presence agrees: A is listed as watching, not in a call.
+        await waitForNoText(bPeople, /In call/, { timeout: 45_000 });
+        const peopleText = (await bPeople.innerText()).replace(/\s+/g, ' ').trim();
+        ok(/Ava/.test(peopleText), `B no longer lists Ava at all: ${peopleText}`);
+        ok(!/In call/.test(peopleText), `B still shows someone in the call: ${peopleText}`);
+        const finalSnap = await mediaSnapshot(b);
+        evidence.step8 = `after A ended the call B had 0 live remote tracks, the dock returned to its idle Voice control, and B's People panel reads "${peopleText}" (open peer connections: ${finalSnap.openPeerConnections})`;
+
+        return evidence;
+      } finally {
+        await ctxA.close().catch(() => {});
+        await ctxB.close().catch(() => {});
+      }
+    } finally {
+      if (mediaBrowser) await mediaBrowser.close().catch(() => {});
       await demo.stop();
     }
   });
