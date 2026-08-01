@@ -13,6 +13,7 @@ import {
   Lightbulb,
   LightbulbOff,
   LogOut,
+  Maximize2,
   MessageSquare,
   PanelRightClose,
   PanelRightOpen,
@@ -122,6 +123,24 @@ export function RoomExperience({ code }: { code: string }) {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [panel, setPanel] = React.useState<'chat' | 'people'>('chat');
   const [panelOpen, setPanelOpen] = React.useState(true);
+  /**
+   * MOBILE ONLY (below `lg`): the room is one of two stable zones.
+   *
+   *  - `watch` — the player sits at its natural 16:9 height and the chat takes
+   *    everything left over.
+   *  - `chat` — the player shrinks to a short sticky mini player (still playing,
+   *    still synced) so the chat owns the screen.
+   *
+   * Desktop ignores this completely: every class it drives carries an `lg:`
+   * reset, so the `lg` layout is unchanged whatever this holds.
+   */
+  const [mobileMode, setMobileMode] = React.useState<'watch' | 'chat'>('watch');
+
+  /** Picking the Chat tab is also the request to enter the mobile chat zone. */
+  const selectPanel = React.useCallback((next: 'chat' | 'people') => {
+    setPanel(next);
+    if (next === 'chat') setMobileMode('chat');
+  }, []);
   const [appSettings, setAppSettings] = React.useState<AppSettings>(getSettings);
   const [unread, setUnread] = React.useState(0);
 
@@ -528,7 +547,21 @@ export function RoomExperience({ code }: { code: string }) {
 
       {/* ---------- stage ---------- */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        <main id="main" className="flex min-w-0 flex-none flex-col p-3 sm:p-5 lg:min-h-0 lg:flex-1 lg:justify-center">
+        <main
+          id="main"
+          className={cn(
+            'flex min-w-0 flex-col p-3 sm:p-5 lg:min-h-0 lg:flex-1 lg:justify-center',
+            mobileMode === 'chat'
+              ? // Chat zone (mobile): a short sticky strip that holds nothing but
+                // the mini player and the way back, so the film keeps playing
+                // while the chat below gets the rest of the screen. Every class
+                // here is undone at `lg`.
+                'sticky top-0 z-20 h-[clamp(96px,16dvh,160px)] shrink-0 flex-row items-center gap-3 lg:static lg:z-auto lg:h-auto lg:shrink lg:flex-col lg:items-stretch lg:gap-0'
+              : // Watch zone (mobile): natural height. With the player's 17rem
+                // floor gone that is exactly its 16:9 box — no empty black band.
+                'flex-none',
+          )}
+        >
           {/* Reserve derived from measurement, not guesswork. At 1440x900:
                 header 69 + stage padding 40 + under-player row 56 = 165px of
                 real chrome, plus ~37px for the conditional notice strip that
@@ -538,8 +571,25 @@ export function RoomExperience({ code }: { code: string }) {
                 screen looked like it was floating. The notice matters because
                 this formula keys off 100dvh, not off the stage's real height,
                 so an unaccounted strip would push the player into a clip. */}
-          <div className="relative mx-auto w-full lg:max-w-[min(100%,calc((100dvh-13rem)*16/9))]">
+          <div
+            className={cn(
+              'relative mx-auto w-full lg:mx-auto lg:h-auto lg:w-full lg:max-w-[min(100%,calc((100dvh-13rem)*16/9))]',
+              // Mini player: the strip's fixed height is the box, so the shell
+              // is height-driven and 16:9 shrinks its WIDTH — never letterboxed.
+              //
+              // `lg:shrink` is load-bearing, not decoration. `mobileMode` is NOT
+              // mobile-only state: the desktop Chat tab and the first click into
+              // the desktop composer both set it to 'chat', and nothing on
+              // desktop ever sets it back. Without this reset the wrapper would
+              // keep `flex-shrink: 0` on desktop, and because the stage's height
+              // reserve is deliberately tight (13rem against ~202px of measured
+              // chrome), a short viewport showing the notice strip would push the
+              // overflow onto the under-player row and clip it.
+              mobileMode === 'chat' && 'mx-0 h-full w-auto shrink-0 lg:shrink',
+            )}
+          >
             <Player
+              compact={mobileMode === 'chat'}
               source={room.source}
               localFile={localFile}
               handleRef={handleRef}
@@ -582,7 +632,15 @@ export function RoomExperience({ code }: { code: string }) {
 
             {/* local file prompt for the partner */}
             {room.source?.type === 'local' && !localFile && (
-              <div className="absolute inset-x-4 bottom-20 z-40 mx-auto max-w-md rounded-2xl glass-deep p-4 text-center">
+              <div
+                className={cn(
+                  'absolute inset-x-4 bottom-20 z-40 mx-auto max-w-md rounded-2xl glass-deep p-4 text-center',
+                  // It is taller than the mini player, so in the chat zone it
+                  // would spill out of the strip. It comes back with the watch
+                  // zone, which is where "Load my copy" is actionable anyway.
+                  mobileMode === 'chat' && 'hidden lg:block',
+                )}
+              >
                 <p className="text-[0.8125rem] text-primary">
                   Your partner is playing <span className="font-medium">{room.source.label}</span>
                 </p>
@@ -594,10 +652,48 @@ export function RoomExperience({ code }: { code: string }) {
                 </Button>
               </div>
             )}
+
+            {/* Chat zone only: the whole mini player is "take me back to
+                watching". A cross-origin YouTube iframe swallows pointer events,
+                so the tap has to be caught by an overlay rather than by an
+                onClick on the wrapper. Rendered ONLY in chat mode and hidden at
+                `lg`, so it can never sit over a live player in the watch zone or
+                on desktop. */}
+            {mobileMode === 'chat' && (
+              <button
+                type="button"
+                onClick={() => setMobileMode('watch')}
+                aria-label="Back to watch mode"
+                className="absolute inset-0 z-40 rounded-xl lg:hidden"
+              />
+            )}
           </div>
 
+          {/* Chat zone only: the visible way back, beside the mini player. */}
+          {mobileMode === 'chat' && (
+            <div className="flex min-w-0 flex-1 items-center justify-end lg:hidden">
+              <Button
+                variant="glass"
+                size="sm"
+                className="!h-11"
+                aria-label="Back to watch mode"
+                onClick={() => setMobileMode('watch')}
+              >
+                <Maximize2 size={14} />
+                Watch
+              </Button>
+            </div>
+          )}
+
           {/* under-player bar */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div
+            className={cn(
+              'mt-3 flex flex-wrap items-center gap-2',
+              // Watch-zone chrome. The chat strip has no room for it, and it
+              // returns the moment you tap Watch.
+              mobileMode === 'chat' && 'hidden lg:flex',
+            )}
+          >
             {/* Local min-height only: the shared sm Button stays 36px for the
                 rest of the app, but room actions meet the 44px standard. */}
             <Button variant="glass" size="sm" className="!h-11" onClick={() => setSourceOpen(true)}>
@@ -608,6 +704,22 @@ export function RoomExperience({ code }: { code: string }) {
             <Button variant="ghost" size="sm" className="!h-11 sm:hidden" onClick={copyInvite}>
               <Copy size={14} />
               {code}
+            </Button>
+
+            {/* The explicit way into the chat zone from the watch zone. Subtle
+                on purpose — the panel tabs below do the same thing. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="!h-11 lg:hidden"
+              aria-label="Open chat"
+              onClick={() => {
+                selectPanel('chat');
+                setPanelOpen(true);
+              }}
+            >
+              <MessageSquare size={14} />
+              Chat
             </Button>
 
             <div className="ml-auto flex items-center gap-1">
@@ -625,12 +737,12 @@ export function RoomExperience({ code }: { code: string }) {
           </div>
 
           {/* mobile panel toggle */}
-          <div className="mt-3 lg:hidden">
+          <div className={cn('mt-3 lg:hidden', mobileMode === 'chat' && 'hidden')}>
             <Segmented
               label="Side panel"
               value={panel}
               onChange={(next) => {
-                setPanel(next);
+                selectPanel(next);
                 setPanelOpen(true);
               }}
               className="w-full"
@@ -685,7 +797,7 @@ export function RoomExperience({ code }: { code: string }) {
                   <Segmented
                     label="Side panel"
                     value={panel}
-                    onChange={setPanel}
+                    onChange={selectPanel}
                     size="sm"
                     options={[
                       {
@@ -777,6 +889,9 @@ export function RoomExperience({ code }: { code: string }) {
                     onSend={room.send}
                     onTyping={room.setTyping}
                     onReact={room.react}
+                    // Reaching for the composer IS the request for the chat
+                    // zone — the mini player keeps the film running above it.
+                    onComposerFocus={() => setMobileMode('chat')}
                   />
                 </div>
 

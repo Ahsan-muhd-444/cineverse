@@ -64,6 +64,14 @@ export interface PlayerProps {
   needsPlaybackGesture?: boolean;
   /** Resume from the room's current position, driven by the user's click. */
   onJoinPlayback?: () => void;
+  /**
+   * Mobile "chat mode": render the picture as a height-driven mini player.
+   *
+   * The parent gives the region a fixed height and this makes the shell fill it
+   * (`h-full w-auto`), so 16:9 is preserved by SHRINKING THE WIDTH — never by
+   * letterboxing. `lg:` overrides put desktop back exactly as it was.
+   */
+  compact?: boolean;
 }
 
 /* ------------------------------------------------------------------ Seek bar */
@@ -189,6 +197,7 @@ export function Player({
   drift = 0,
   needsPlaybackGesture = false,
   onJoinPlayback,
+  compact = false,
 }: PlayerProps) {
   const shellRef = React.useRef<HTMLDivElement>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -699,15 +708,22 @@ export function Player({
         onPointerDown={wakeFullscreenChrome}
         onKeyDown={wakeFullscreenChrome}
         className={cn(
-          'group/player relative isolate w-full overflow-hidden bg-black',
+          'group/player relative isolate overflow-hidden bg-black',
           // Cinema frame: a neutral hairline plus a controlled deep shadow so
           // the screen reads as installed in the room rather than as another
           // glass card. No coloured halo — the frame must never tint the
           // picture. Radius drops one step at narrow widths. Fullscreen is
           // deliberately frame-free: radius, border and shadow all removed.
+          //
+          // No mobile min-height floor. `min-h-[17rem]` (272px, phones only)
+          // forced the player ~53px taller than its natural 16:9 box on a 390px
+          // screen; with the room locked to the viewport that stolen height came
+          // straight out of the chat. 16:9 is now the only height rule.
           fullscreen
-            ? 'h-dvh rounded-none'
-            : 'aspect-video min-h-[17rem] rounded-2xl border border-white/[0.09] shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)] sm:min-h-0 sm:rounded-3xl',
+            ? 'h-dvh w-full rounded-none'
+            : compact
+              ? 'aspect-video h-full min-h-0 w-auto max-w-full rounded-xl border border-white/[0.09] lg:h-auto lg:w-full lg:rounded-3xl lg:shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)]'
+              : 'aspect-video min-h-0 w-full rounded-2xl border border-white/[0.09] shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)] sm:rounded-3xl',
           // Hide the pointer once the fullscreen chrome has gone idle.
           fullscreen && !chromeVisible && 'cursor-none',
         )}
@@ -885,17 +901,22 @@ export function Player({
       onPointerMove={wake}
       onPointerLeave={() => playing && setControlsVisible(false)}
       className={cn(
-        'group/player relative isolate w-full overflow-hidden bg-black',
-        // On phones the 16:9 box alone is too short to hold the empty state, so
-        // give it a floor until there is enough width for the ratio to breathe.
-          // Cinema frame: a neutral hairline plus a controlled deep shadow so
+        'group/player relative isolate overflow-hidden bg-black',
+        // Cinema frame: a neutral hairline plus a controlled deep shadow so
         // the screen reads as installed in the room rather than as another
         // glass card. No coloured halo — the frame must never tint the
         // picture. Radius drops one step at narrow widths. Fullscreen is
         // deliberately frame-free: radius, border and shadow all removed.
+        //
+        // The old `min-h-[17rem]` phone floor is gone: it made the player 53px
+        // taller than 16:9 needs on a 390px screen, and inside the
+        // viewport-locked room that height was taken from the chat. The empty
+        // state is sized to fit the natural ratio instead.
         fullscreen
-          ? 'h-dvh rounded-none'
-          : 'aspect-video min-h-[17rem] rounded-2xl border border-white/[0.09] shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)] sm:min-h-0 sm:rounded-3xl',
+          ? 'h-dvh w-full rounded-none'
+          : compact
+            ? 'aspect-video h-full min-h-0 w-auto max-w-full rounded-xl border border-white/[0.09] lg:h-auto lg:w-full lg:rounded-3xl lg:shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)]'
+            : 'aspect-video min-h-0 w-full rounded-2xl border border-white/[0.09] shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)] sm:rounded-3xl',
         !showingControls && playing && 'cursor-none',
       )}
     >

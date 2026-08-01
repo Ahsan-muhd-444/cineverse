@@ -1442,6 +1442,162 @@ function demoScenarios({ browser }) {
     }
   });
 
+  /*
+   * TWO STABLE MOBILE ZONES: Watch and Chat.
+   *
+   * The regression this locks down: the player shell carried a mobile-only
+   * `min-h-[17rem]` (272px) floor. Once the room was viewport-locked, that floor
+   * forced the player ~65px taller than its natural 16:9 height and the chat got
+   * whatever was left — measured at 126px, 15% of the screen. Watch mode now
+   * gives the player its natural height, and chat mode shrinks it to a mini
+   * player so the conversation gets the screen.
+   */
+  scenario('mobile two-zone room: watch mode, chat mode, and back', async () => {
+    const demo = await startDemoModeApp((m) => console.log(`[direct] ${m}`));
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
+    });
+    const page = await ctx.newPage();
+    const code = `ZON${Math.floor(Math.random() * 900 + 100)}`;
+    const VH = 844;
+
+    /** Measured geometry of the two zones. */
+    const zones = () =>
+      page.evaluate(() => {
+        const log = document.querySelector('[role="log"]');
+        const main = document.querySelector('main#main');
+        const media = document.querySelector('iframe[src*="youtube.com/embed/"], video');
+        const box = (el) => (el ? el.getBoundingClientRect() : null);
+        const l = box(log);
+        const m = box(main);
+        const p = box(media);
+        return {
+          pageHeight: document.documentElement.scrollHeight,
+          pageWidth: document.documentElement.scrollWidth,
+          scrollX: window.scrollX,
+          playerRegionH: m ? Math.round(m.height) : 0,
+          playerH: p ? Math.round(p.height) : 0,
+          playerW: p ? Math.round(p.width) : 0,
+          chatH: l ? Math.round(l.height) : 0,
+          chatBottom: l ? Math.round(l.bottom) : 0,
+        };
+      });
+
+    try {
+      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      const nameField = page.getByPlaceholder('Your name');
+      await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+      await nameField.fill('Phone');
+      await page.getByRole('button', { name: 'Take my seat' }).click();
+      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().waitFor({ timeout: 90_000 });
+
+      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().click();
+      const dialog = page.getByRole('dialog');
+      await dialog.waitFor({ state: 'visible', timeout: 30_000 });
+      await dialog.getByRole('tab', { name: /Recommended/i }).click();
+      await dialog.getByRole('button', { name: /Trailer|Full movie/i }).first().click();
+      await dialog.waitFor({ state: 'hidden', timeout: 30_000 });
+      await page.waitForTimeout(1500);
+
+      /* ---- A. WATCH MODE: a real cinema screen, chat visible below ---- */
+      const watch = await zones();
+      ok(watch.playerH >= 170, `watch: player is only ${watch.playerH}px tall — not a cinema screen`);
+      ok(watch.playerW >= 300, `watch: player is only ${watch.playerW}px wide`);
+      // The old floor made this 270px against a natural ~204px. Anything much
+      // taller than the 16:9 height means the floor is back.
+      ok(watch.playerH <= 260, `watch: player ${watch.playerH}px is taller than its 16:9 height — the min-h floor is back`);
+      ok(watch.chatH >= 120, `watch: chat preview is only ${watch.chatH}px`);
+      ok(watch.pageHeight <= VH + 2, `watch: page grew to ${watch.pageHeight}px`);
+
+      /* ---- B. CHAT MODE: focusing the composer hands the screen to chat ---- */
+      const composer = page.getByPlaceholder(/Message/i).first();
+      await composer.click();
+      await page.waitForTimeout(900);
+      const chatMode = await zones();
+      ok(chatMode.playerH < watch.playerH, `chat: player did not shrink (${chatMode.playerH} vs ${watch.playerH})`);
+      ok(chatMode.playerH >= 80, `chat: player shrank to ${chatMode.playerH}px — it must stay visible`);
+      // 16:9 preserved by shrinking WIDTH, so there are no black bars.
+      const ratio = chatMode.playerW / Math.max(1, chatMode.playerH);
+      ok(ratio > 1.6 && ratio < 1.95, `chat: mini-player aspect ${ratio.toFixed(2)} is not 16:9 — it is letterboxed`);
+      ok(chatMode.chatH >= VH * 0.45, `chat: chat is only ${chatMode.chatH}px (${Math.round((chatMode.chatH / VH) * 100)}%) — too small`);
+      ok(chatMode.chatH > watch.chatH, 'chat: the chat area must grow in chat mode');
+
+      /* ---- C. MANY MESSAGES: the list scrolls, the page does not ---- */
+      for (let i = 1; i <= 30; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await composer.fill(`two-zone message ${i}`);
+        // eslint-disable-next-line no-await-in-loop
+        await composer.press('Enter');
+      }
+      await page.waitForTimeout(1200);
+      const flooded = await zones();
+      ok(flooded.pageHeight <= VH + 2, `flooded: page grew to ${flooded.pageHeight}px`);
+      ok(flooded.playerH >= 80, 'flooded: the film must stay visible in chat mode');
+      const composerBox = await composer.boundingBox();
+      ok(composerBox && composerBox.y + composerBox.height <= VH + 1, 'flooded: composer must stay on screen');
+      ok(flooded.chatBottom <= VH + 1, 'flooded: the message list must stay on screen');
+      const listScrolls = await page.evaluate(() => {
+        const log = document.querySelector('[role="log"]');
+        return log ? log.scrollHeight > log.clientHeight : false;
+      });
+      ok(listScrolls, 'flooded: the message list should be the scroller');
+
+      /* ---- D. BACK TO WATCH by tapping the compact player ---- */
+      await page.locator('main#main').click({ position: { x: 195, y: 60 } });
+      await page.waitForTimeout(900);
+      const backToWatch = await zones();
+      ok(
+        backToWatch.playerH >= watch.playerH - 4,
+        `back: player did not return to full size (${backToWatch.playerH} vs ${watch.playerH})`,
+      );
+      // The film must not have been swapped or stopped by the mode change.
+      const stillPlaying = await page.evaluate(
+        () => Boolean(document.querySelector('iframe[src*="youtube.com/embed/"], video')),
+      );
+      ok(stillPlaying, 'back: the source must survive the mode switch');
+
+      /* ---- E. ACCIDENTAL SIDEWAYS SWIPE MOVES NOTHING ---- */
+      for (const y of [200, 600]) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(330, y);
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.down();
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(40, y, { steps: 12 });
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.up();
+      }
+      await page.waitForTimeout(400);
+      const swiped = await zones();
+      ok(swiped.scrollX === 0, `swipe: page scrolled sideways to ${swiped.scrollX}`);
+      ok(swiped.pageWidth <= 391, `swipe: page is ${swiped.pageWidth}px wide against a 390px viewport`);
+
+      /* ---- F. LONG MESSAGE: textarea caps, composer stays put ---- */
+      await composer.click();
+      await page.waitForTimeout(600);
+      await composer.fill('a very long message '.repeat(40));
+      await page.waitForTimeout(400);
+      const grown = await composer.boundingBox();
+      ok(grown && grown.height <= 140, `long text: textarea grew to ${grown?.height}px`);
+      ok(grown && grown.y + grown.height <= VH + 1, 'long text: composer must stay on screen');
+      const afterTyping = await zones();
+      ok(afterTyping.pageHeight <= VH + 2, `long text: page grew to ${afterTyping.pageHeight}px`);
+      await composer.fill('');
+
+      return {
+        watch: { playerH: watch.playerH, playerW: watch.playerW, chatH: watch.chatH },
+        chat: { playerH: chatMode.playerH, playerW: chatMode.playerW, chatH: chatMode.chatH, chatPct: Math.round((chatMode.chatH / VH) * 100) },
+        backToWatchPlayerH: backToWatch.playerH,
+      };
+    } finally {
+      await ctx.close();
+      await demo.stop();
+    }
+  });
+
   return FILTER ? list.filter((s) => s.name.includes(FILTER)) : list;
 }
 

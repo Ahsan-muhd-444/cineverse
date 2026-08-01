@@ -560,6 +560,7 @@ export function Chat({
   onSend,
   onTyping,
   onReact,
+  onComposerFocus,
 }: {
   messages: ChatMessage[];
   myId: string;
@@ -570,6 +571,8 @@ export function Chat({
   ) => void | Promise<{ ok: true; id?: string } | { ok: false; error: string; retryAfterMs?: number }>;
   onTyping: (isTyping: boolean) => void;
   onReact: (messageId: string, emoji: string) => void;
+  /** The composer took focus — the room uses this to enter mobile chat mode. */
+  onComposerFocus?: () => void;
 }) {
   const [draft, setDraft] = React.useState('');
   const [pickerOpen, setPickerOpen] = React.useState(false);
@@ -874,6 +877,7 @@ export function Chat({
             <textarea
               value={draft}
               onChange={(e) => handleDraft(e.target.value)}
+              onFocus={() => onComposerFocus?.()}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
