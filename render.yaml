@@ -16,3 +16,12 @@ services:
         value: 22.18.0
       - key: NODE_ENV
         value: production
+      # How long a seat survives a disconnect. Phones suspend the page and close
+      # the socket the moment they are backgrounded, so a short window meant a
+      # brief interruption cost the viewer their seat — and rejoining a room with
+      # a waiting room meant asking the other person to approve them again. Two
+      # minutes covers a normal interruption; presence still shows the member as
+      # disconnected while it runs. Stated here rather than left to the default
+      # so the deployed value is visible and tunable without a code change.
+      - key: ROOM_RECONNECT_GRACE_MS
+        value: "120000"

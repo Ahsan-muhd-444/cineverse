@@ -24,11 +24,39 @@ const {
 
 /* ---------------- grace configuration ---------------- */
 
-test('grace window reads env and falls back to 30s', () => {
+test('grace window reads env and falls back to the default', () => {
   assert.equal(reconnectGraceMs({ ROOM_RECONNECT_GRACE_MS: '500' }), 500);
   assert.equal(reconnectGraceMs({}), DEFAULT_GRACE_MS);
   assert.equal(reconnectGraceMs({ ROOM_RECONNECT_GRACE_MS: 'soon' }), DEFAULT_GRACE_MS);
   assert.equal(reconnectGraceMs({ ROOM_RECONNECT_GRACE_MS: '-5' }), DEFAULT_GRACE_MS);
+});
+
+test('the default grace survives a real phone interruption', () => {
+  /*
+   * A phone suspends the page and closes the socket the instant it is
+   * backgrounded. At 30s the seat expired during an ordinary interruption —
+   * answering a message, checking something else — and rejoining a room with a
+   * waiting room meant the other person had to approve the viewer again.
+   * Anything shorter than a minute reintroduces that.
+   */
+  assert.ok(DEFAULT_GRACE_MS >= 60_000, `default grace ${DEFAULT_GRACE_MS}ms is too short for a backgrounded phone`);
+  assert.equal(DEFAULT_GRACE_MS, 120_000, 'two minutes — see server/seats.js');
+});
+
+test('a seat is still held part-way through the default grace', () => {
+  // The exact property the bug violated: disconnected 60s ago, still yours.
+  const member = { connected: false, disconnectedAt: 1_000_000 };
+  const graceMs = DEFAULT_GRACE_MS;
+  assert.equal(
+    shouldFinalizeDisconnect({ member, now: 1_000_000 + 60_000, graceMs }),
+    false,
+    'a seat must survive a one-minute interruption',
+  );
+  assert.equal(
+    shouldFinalizeDisconnect({ member, now: 1_000_000 + graceMs, graceMs }),
+    true,
+    'and be released once the window truly elapses',
+  );
 });
 
 test('grace can be explicitly disabled with 0', () => {

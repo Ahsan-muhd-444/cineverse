@@ -13,7 +13,18 @@
 
 const crypto = require('crypto');
 
-const DEFAULT_GRACE_MS = 30_000;
+/**
+ * How long a seat survives a disconnect, by default.
+ *
+ * TWO MINUTES, not thirty seconds, because of how phones actually behave. Tap
+ * the home button, answer a message, come back — the OS suspends the page and
+ * closes the socket almost immediately. At 30s the seat was gone before a normal
+ * interruption ended, and rejoining meant going through the waiting room again
+ * and asking the other person to re-approve you. For a two-person cinema that is
+ * far worse than briefly showing someone as "reconnecting": the seat is held,
+ * presence already reports `connected: false`, and nothing about the room is lost.
+ */
+const DEFAULT_GRACE_MS = 120_000;
 
 /** How long a disconnected member keeps their seat before being removed. */
 function reconnectGraceMs(env = process.env) {

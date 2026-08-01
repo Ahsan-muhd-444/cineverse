@@ -3,6 +3,45 @@
 import { io, type Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
+let detachWake: (() => void) | null = null;
+
+/**
+ * Reconnect the instant the tab comes back, instead of waiting out a backoff.
+ *
+ * A phone suspends the page when it is backgrounded: JavaScript stops, timers
+ * stop, and the socket is closed by the OS. When the user returns, Socket.IO's
+ * own retry is governed by a timer that was frozen with everything else, so the
+ * connection can sit dead for seconds after the screen is already showing the
+ * room. During that gap the reconnect grace is quietly running down.
+ *
+ * Every one of these events means "the user is looking at this again", so each
+ * one asks the socket to connect NOW. `connect()` is a no-op when already
+ * connected or connecting, so firing several at once is harmless.
+ */
+function attachWakeHandlers(live: Socket): () => void {
+  if (typeof window === 'undefined') return () => {};
+
+  const reconnectNow = () => {
+    if (!live.connected) live.connect();
+  };
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') reconnectNow();
+  };
+
+  document.addEventListener('visibilitychange', onVisible);
+  // `pageshow` also fires when the page is restored from the back/forward cache,
+  // where no other event is guaranteed.
+  window.addEventListener('pageshow', reconnectNow);
+  window.addEventListener('focus', reconnectNow);
+  window.addEventListener('online', reconnectNow);
+
+  return () => {
+    document.removeEventListener('visibilitychange', onVisible);
+    window.removeEventListener('pageshow', reconnectNow);
+    window.removeEventListener('focus', reconnectNow);
+    window.removeEventListener('online', reconnectNow);
+  };
+}
 
 /** One connection per tab, shared by every hook that needs it. */
 export function getSocket(): Socket {
@@ -16,12 +55,15 @@ export function getSocket(): Socket {
       reconnectionAttempts: Infinity,
       timeout: 12000,
     });
+    detachWake = attachWakeHandlers(socket);
   }
   return socket;
 }
 
 export function disposeSocket(): void {
   if (socket) {
+    detachWake?.();
+    detachWake = null;
     socket.removeAllListeners();
     socket.disconnect();
     socket = null;
