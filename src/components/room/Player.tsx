@@ -3,7 +3,9 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  AlertTriangle,
   Captions,
+  Film,
   Gauge,
   Loader2,
   Maximize2,
@@ -21,9 +23,19 @@ import {
 } from 'lucide-react';
 import type { MediaSource } from '@/lib/types';
 import type { PlayerHandle, SyncAction } from '@/hooks/useSyncedPlayback';
-import { cn, formatTime, youTubeId } from '@/lib/utils';
+import { cn, formatTime } from '@/lib/utils';
+import { resolveYouTubeId } from '@/lib/media';
+import { resolveDisplayedPosition, shouldShowHtml5Loading } from '@/hooks/playbackProjection';
+import {
+  isForeignFullscreen,
+  isShellFullscreen,
+  shouldDisableIframePointerEvents,
+  shouldShowFullscreenChrome,
+} from './fullscreen';
+import { resetYouTubeApiLoader, type YouTubeFailure } from './youtubeApi';
 import { Tooltip } from '@/components/ui/Bits';
-import { YouTubeEngine } from './YouTubeEngine';
+import { Button } from '@/components/ui/Button';
+import { YouTubeEngine, type YouTubePhase } from './YouTubeEngine';
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -32,11 +44,22 @@ export interface PlayerProps {
   localFile: File | null;
   handleRef: React.MutableRefObject<PlayerHandle | null>;
   onUserControl: (action: SyncAction, extra?: { time?: number; rate?: number }) => void;
+  /** True while a remote sync command is being applied — YouTube uses it to
+   *  avoid echoing programmatic play/pause/seek back to the room. */
+  isApplying?: () => boolean;
+  /** Open the source picker — offered as the recovery action when a source
+   *  can't be played (e.g. an embedding-disabled YouTube video). */
+  onRequestSource?: () => void;
   onReady?: () => void;
   onProgress?: (position: number, duration: number) => void;
   emptyState: React.ReactNode;
   overlay?: React.ReactNode;
   drift?: number;
+  /** True when a remote play was blocked by autoplay policy on this device —
+   *  the YouTube branch shows a one-click "Join playback" affordance. */
+  needsPlaybackGesture?: boolean;
+  /** Resume from the room's current position, driven by the user's click. */
+  onJoinPlayback?: () => void;
 }
 
 /* ------------------------------------------------------------------ Seek bar */
@@ -99,12 +122,14 @@ function SeekBar({
       >
         <div className="absolute inset-y-0 left-0 rounded-full bg-white/20" style={{ width: `${bufPct}%` }} />
         <div
-          className="absolute inset-y-0 left-0 rounded-full bg-[linear-gradient(90deg,#7c3aed,#3b6cf6_55%,#22d3ee)] shadow-[0_0_14px_rgba(124,58,237,0.75)]"
+          // Playback progress is a product state, not a realtime one: solid
+          // gold, no purple->cyan sweep and no persistent glow.
+          className="absolute inset-y-0 left-0 rounded-full bg-gold-400"
           style={{ width: `${pct}%` }}
         />
         <div
           className={cn(
-            'absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.6)] transition-transform duration-300',
+            'absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.6)] transition-transform duration-[160ms] ease-swift',
             dragging ? 'scale-125' : 'scale-0 group-hover/seek:scale-100',
           )}
           style={{ left: `${pct}%` }}
@@ -126,9 +151,13 @@ function SeekBar({
         )}
       </AnimatePresence>
 
+      {/* Keyboard/screen-reader path only. pointer-events-none is essential:
+          without it this invisible input sits on top of the track and its
+          onChange fires on EVERY pointer move of a drag — committing a seek
+          (and a sync:control broadcast) per movement instead of one on release. */}
       <input
         type="range"
-        className="sr-range"
+        className="sr-range pointer-events-none"
         min={0}
         max={Math.max(1, duration)}
         step={0.5}
@@ -147,11 +176,15 @@ export function Player({
   localFile,
   handleRef,
   onUserControl,
+  isApplying,
+  onRequestSource,
   onReady,
   onProgress,
   emptyState,
   overlay,
   drift = 0,
+  needsPlaybackGesture = false,
+  onJoinPlayback,
 }: PlayerProps) {
   const shellRef = React.useRef<HTMLDivElement>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -170,12 +203,34 @@ export function Player({
   const [menu, setMenu] = React.useState<null | 'settings' | 'quality'>(null);
   const [controlsVisible, setControlsVisible] = React.useState(true);
   const [failed, setFailed] = React.useState<string | null>(null);
+  // Why the YouTube source failed. An 'api' failure (script blocked, network,
+  // loader timeout) is retryable locally; a 'video' one is not.
+  const [failureKind, setFailureKind] = React.useState<'api' | 'video' | null>(null);
+  // Bumping this remounts ONLY the local YouTube engine — it never touches the
+  // shared room source, so a retry can't re-broadcast "put on …" to the room.
+  const [youtubeAttempt, setYoutubeAttempt] = React.useState(0);
   const [scrubbing, setScrubbing] = React.useState<number | null>(null);
+  // Whether the current engine has reported ready. Controls stay pending until
+  // then, so nobody clicks into a player that cannot yet accept the command.
+  const [ready, setReady] = React.useState(false);
+  // YouTube lifecycle phase — drives ONLY the startup loading affordance, never
+  // controls over YouTube's native UI.
+  const [youtubePhase, setYoutubePhase] = React.useState<YouTubePhase | null>(null);
 
   const hideTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // After a local seek, hold the displayed position at the target until the
+  // engine actually catches up (YouTube keeps reporting the OLD time while it
+  // buffers, which made the bar visibly snap back right after a drag).
+  const seekHold = React.useRef<{ target: number; until: number } | null>(null);
+  // Whether we have already run the one-time "engine ready" side effect (which
+  // triggers sync.resync()) for the CURRENT source. Without this guard, an
+  // HTML5 <video> re-fires `canplay` after every programmatic seek, so resync's
+  // own seek re-triggered ready → resync → seek in a tight infinite loop that
+  // pinned the playhead at 0 and churned the loading overlay forever.
+  const readyAnnouncedRef = React.useRef(false);
 
   const isYouTube = source?.type === 'youtube';
-  const ytId = isYouTube ? youTubeId(source!.value) : null;
+  const ytId = isYouTube ? resolveYouTubeId(source) : null;
 
   const objectUrl = React.useMemo(() => (localFile ? URL.createObjectURL(localFile) : null), [localFile]);
   React.useEffect(() => () => {
@@ -183,6 +238,86 @@ export function Player({
   }, [objectUrl]);
 
   const mediaUrl = source?.type === 'local' ? objectUrl : source?.value || null;
+
+  /* ---------------- reset transient state on a source switch ---------------- */
+
+  // A new source must never inherit the previous one's play/loading/error state.
+  const sourceKey = source ? `${source.type}:${source.value}` : null;
+  React.useEffect(() => {
+    setReady(false);
+    setFailed(null);
+    setFailureKind(null);
+    // A genuinely new source starts its retry count over.
+    setYoutubeAttempt(0);
+    setPlaying(false);
+    setWaiting(false);
+    setPosition(0);
+    setDuration(0);
+    setBuffered(0);
+    setScrubbing(null);
+    setYoutubePhase(null);
+    seekHold.current = null;
+    // The new source gets exactly one ready→resync announcement.
+    readyAnnouncedRef.current = false;
+  }, [sourceKey]);
+
+  // A YouTube source whose ID can't be parsed can never load — say so instead of
+  // handing an unusable value to a <video> element.
+  React.useEffect(() => {
+    if (isYouTube && !ytId) {
+      setFailed('That YouTube link looks invalid — check the video ID.');
+      setFailureKind('video');
+    }
+  }, [isYouTube, ytId]);
+
+  // YouTube path: the engine fires onReady exactly once per player, so resync
+  // once here is safe. Clearing `failed` here is what makes a late-but-successful
+  // load (or a successful retry) drop the previous error overlay.
+  const handleEngineReady = React.useCallback(() => {
+    setReady(true);
+    setFailed(null);
+    setFailureKind(null);
+    onReady?.();
+  }, [onReady]);
+
+  const handleEngineError = React.useCallback((failure: YouTubeFailure) => {
+    setFailed(failure.message);
+    setFailureKind(failure.kind);
+  }, []);
+
+  /**
+   * Rebuild the local YouTube engine after a retryable API failure.
+   *
+   * Deliberately local: it resets the loader and remounts the engine via the
+   * `key`, but never calls setSource — the shared room source is untouched, so
+   * no "put on …" message and no sync:control is broadcast. Once the engine
+   * reports ready, the normal onReady → resync path puts us back on the room's
+   * projected position.
+   */
+  const retryYouTube = React.useCallback(() => {
+    resetYouTubeApiLoader();
+    setFailed(null);
+    setFailureKind(null);
+    setReady(false);
+    setYoutubePhase('loading');
+    setYoutubeAttempt((attempt) => attempt + 1);
+  }, []);
+
+  /**
+   * HTML5 path: mark the player ready from ANY of the several media events that
+   * mean "metadata/frame is available" — not one fragile `canplay`. The
+   * onReady() side effect (which runs sync.resync()) fires only ONCE per source,
+   * because resync seeks and a seek re-fires those same media events; announcing
+   * every time was the infinite loop.
+   */
+  const markReadyOnce = React.useCallback(() => {
+    setReady(true);
+    setWaiting(false);
+    if (!readyAnnouncedRef.current) {
+      readyAnnouncedRef.current = true;
+      onReady?.();
+    }
+  }, [onReady]);
 
   /* ---------------- controls auto-hide ---------------- */
 
@@ -235,23 +370,49 @@ export function Player({
     const id = setInterval(() => {
       const handle = handleRef.current;
       if (!handle || !handle.ready()) return;
+      // Readiness backstop (HTML5): if the engine reports ready but our media
+      // events never marked it — because they fired before React attached its
+      // listeners, e.g. cached/instantly-ready media — announce it here (once).
+      // This is what guarantees the loading overlay can never stick on a video
+      // that is actually ready.
+      if (!isYouTube && !readyAnnouncedRef.current) markReadyOnce();
       const t = handle.getTime();
       const d = handle.getDuration();
-      setPosition(t);
+      // Respect a fresh local seek: keep showing the target until the engine
+      // reports a time near it (or the hold expires), instead of snapping back.
+      const { position: shown, holding } = resolveDisplayedPosition(seekHold.current, t, Date.now());
+      if (!holding) seekHold.current = null;
+      setPosition(shown);
       setDuration(d);
-      if (isYouTube) setPlaying(!handle.isPaused());
+      // Play/pause state is driven by engine events (onYouTubePhase / <video>
+      // events), not polled here — polling isPaused() flipped the UI to "paused"
+      // during buffering.
       onProgress?.(t, d);
     }, 250);
     return () => clearInterval(id);
-  }, [handleRef, isYouTube, onProgress]);
+  }, [handleRef, isYouTube, onProgress, markReadyOnce]);
 
   /* ---------------- fullscreen ---------------- */
 
   React.useEffect(() => {
-    const onChange = () => setFullscreen(Boolean(document.fullscreenElement));
+    const onChange = () => {
+      const element = document.fullscreenElement;
+      // Only OUR shell counts. Treating any fullscreen element as ours is what
+      // let a YouTube iframe hold fullscreen while the UI rendered its exit
+      // button into a document nobody could see.
+      setFullscreen(isShellFullscreen(shellRef.current, element));
+      // Safety net for YouTube: if the iframe (or anything else) grabs native
+      // fullscreen, back out immediately — the parent cannot overlay a
+      // cross-origin fullscreen element, so there would be no way out.
+      if (isYouTube && isForeignFullscreen(shellRef.current, element)) {
+        document.exitFullscreen().catch(() => {
+          /* already exiting, or not permitted — nothing more we can do */
+        });
+      }
+    };
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
+  }, [isYouTube]);
 
   const toggleFullscreen = React.useCallback(async () => {
     try {
@@ -261,6 +422,40 @@ export function Player({
       /* some browsers refuse without a direct gesture */
     }
   }, []);
+
+  /* ---------------- fullscreen chrome (cursor + exit button) ----------------
+     In fullscreen the cursor and exit button fade out once the pointer has been
+     still, and come straight back on any movement — the cinematic behaviour a
+     full-screen film needs. Only applies while WE own fullscreen. */
+
+  const [chromeVisible, setChromeVisible] = React.useState(true);
+  const lastPointerAtRef = React.useRef(Date.now());
+
+  const wakeFullscreenChrome = React.useCallback(() => {
+    lastPointerAtRef.current = Date.now();
+    // Reveal immediately; the idle poll below handles hiding.
+    setChromeVisible(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (!fullscreen) {
+      setChromeVisible(true);
+      return;
+    }
+    lastPointerAtRef.current = Date.now();
+    setChromeVisible(true);
+    const id = setInterval(() => {
+      setChromeVisible(
+        shouldShowFullscreenChrome({ fullscreen: true, lastPointerAt: lastPointerAtRef.current, now: Date.now() }),
+      );
+    }, 300);
+    return () => clearInterval(id);
+  }, [fullscreen]);
+
+  // While the chrome is idle-hidden, the YouTube iframe must stop swallowing
+  // pointer events, or its own cursor stays drawn over the film and the parent
+  // never sees the movement that should bring the chrome back.
+  const iframeInteractive = !shouldDisableIframePointerEvents({ isYouTube, fullscreen, chromeVisible });
 
   const togglePiP = React.useCallback(async () => {
     const video = videoRef.current;
@@ -277,7 +472,8 @@ export function Player({
 
   const togglePlay = React.useCallback(() => {
     const handle = handleRef.current;
-    if (!handle) return;
+    // Ignore play/pause until the engine can actually accept it.
+    if (!handle || !handle.ready()) return;
     if (handle.isPaused()) {
       void handle.play();
       onUserControl('play', { time: handle.getTime() });
@@ -305,8 +501,10 @@ export function Player({
   const seekBy = React.useCallback(
     (delta: number) => {
       const handle = handleRef.current;
-      if (!handle) return;
+      if (!handle || !handle.ready()) return;
       const next = Math.max(0, Math.min(handle.getDuration() || Infinity, handle.getTime() + delta));
+      seekHold.current = { target: next, until: Date.now() + 1600 };
+      setPosition(next);
       handle.seek(next);
       onUserControl('seek', { time: next });
       wake();
@@ -317,9 +515,10 @@ export function Player({
   const seekTo = React.useCallback(
     (t: number) => {
       const handle = handleRef.current;
-      if (!handle) return;
-      handle.seek(t);
+      if (!handle || !handle.ready()) return;
+      seekHold.current = { target: t, until: Date.now() + 1600 };
       setPosition(t);
+      handle.seek(t);
       onUserControl('seek', { time: t });
       wake();
     },
@@ -339,8 +538,24 @@ export function Player({
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Typing always wins — this guard must come FIRST, before any branch.
+      // Behind the YouTube branch it was unreachable, so typing "f" in chat
+      // toggled fullscreen.
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      const isEditable =
+        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (isEditable) return;
+
+      // YouTube-native mode: let YouTube's own player handle play/seek keys, so
+      // we don't double-drive them. Fullscreen, though, is CineVerse-owned now
+      // (YouTube's own fs button is disabled), so 'f' toggles our wrapper.
+      if (isYouTube) {
+        if (e.key.toLowerCase() === 'f') {
+          e.preventDefault();
+          void toggleFullscreen();
+        }
+        return;
+      }
 
       switch (e.key.toLowerCase()) {
         case ' ':
@@ -390,7 +605,7 @@ export function Player({
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, seekBy, toggleFullscreen, togglePiP, wake]);
+  }, [togglePlay, seekBy, toggleFullscreen, togglePiP, wake, isYouTube]);
 
   /* ---------------- volume plumbing ---------------- */
 
@@ -413,6 +628,214 @@ export function Player({
   const showingControls = controlsVisible || !playing || Boolean(menu);
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const variants = source?.variants?.length ? source.variants : null;
+  // True startup only: a source is set but the engine hasn't reported ready.
+  // Used for the "Loading…" label; once ready, a paused first frame is NOT
+  // loading and must show controls, not a spinner.
+  const html5Startup = Boolean(source) && !ready && !failed;
+  // Whether to cover the HTML5 picture: startup, or genuine mid-play buffering —
+  // never a stuck `waiting` flag on a paused, ready video.
+  const html5Loading = shouldShowHtml5Loading({
+    hasSource: Boolean(source),
+    ready,
+    failed: Boolean(failed),
+    waiting,
+    playing,
+  });
+
+  /* ---------------- YouTube: native controls, CineVerse owns only room sync ----------------
+     YouTube keeps its own player UI (controls, seek bar, settings, fullscreen).
+     We render just the iframe — no CineVerse control bar, center button, cover
+     or click-swallow layer — and the engine mirrors native play/pause/seek/rate
+     into the room. Trying to replace YouTube's UI with app controls is what
+     caused the cover/flash/"Starting…" bugs; this keeps YouTube's UI and only
+     syncs room state. */
+  if (source && isYouTube) {
+    return (
+      <div
+        ref={shellRef}
+        onPointerMove={wakeFullscreenChrome}
+        onPointerDown={wakeFullscreenChrome}
+        onKeyDown={wakeFullscreenChrome}
+        className={cn(
+          'group/player relative isolate w-full overflow-hidden bg-black',
+          // Cinema frame: a neutral hairline plus a controlled deep shadow so
+          // the screen reads as installed in the room rather than as another
+          // glass card. No coloured halo — the frame must never tint the
+          // picture. Radius drops one step at narrow widths. Fullscreen is
+          // deliberately frame-free: radius, border and shadow all removed.
+          fullscreen
+            ? 'h-dvh rounded-none'
+            : 'aspect-video min-h-[17rem] rounded-2xl border border-white/[0.09] shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)] sm:min-h-0 sm:rounded-3xl',
+          // Hide the pointer once the fullscreen chrome has gone idle.
+          fullscreen && !chromeVisible && 'cursor-none',
+        )}
+      >
+        {ytId ? (
+          <YouTubeEngine
+            // The attempt counter remounts the engine on a local retry without
+            // touching the room's source.
+            key={`${ytId}:${youtubeAttempt}`}
+            videoId={ytId}
+            handleRef={handleRef}
+            muted={muted}
+            volume={volume}
+            onReady={handleEngineReady}
+            onError={handleEngineError}
+            onPhase={setYoutubePhase}
+            onUserIntent={onUserControl}
+            isApplying={isApplying}
+            iframeInteractive={iframeInteractive}
+          />
+        ) : (
+          <div className="absolute inset-0 grid place-items-center">{emptyState}</div>
+        )}
+
+        {/* Startup affordance: a labelled loader until YouTube's own player is
+            ready (never a permanent silent black box). pointer-events-none, so it
+            never intercepts YouTube's UI, and gone the moment the player is ready —
+            after which YouTube's own thumbnail + play button are the affordance. */}
+        {ytId && !failed && (!ready || youtubePhase === 'loading') && (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black">
+            <span className="grid place-items-center gap-2">
+              <Loader2 className="animate-spin text-white/70" size={30} />
+              <span className="text-[0.75rem] font-medium text-supporting">Loading YouTube…</span>
+            </span>
+          </div>
+        )}
+
+        {/* Floating reactions (pointer-events-none — never blocks YouTube UI). */}
+        {overlay}
+
+        {/* CineVerse-owned fullscreen affordance.
+            YouTube keeps play/pause/seek INSIDE the iframe; CineVerse owns the
+            fullscreen shell + a guaranteed exit button, because a cross-origin
+            iframe in native fullscreen can't be overlaid by the parent. The
+            container is pointer-events-none so YouTube's own controls stay
+            clickable — ONLY the button captures pointer events. In fullscreen the
+            exit button is always visible (not hover-gated) on desktop and mobile. */}
+        {ytId && !failed && (
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-0 z-40 transition-opacity duration-200',
+              // Fade out with the cursor once fullscreen goes idle; any pointer
+              // movement brings both straight back. Keyboard focus counts as
+              // movement — otherwise tabbing to Exit lands on an invisible
+              // button with no way to tell it is there.
+              fullscreen && !chromeVisible && 'opacity-0 focus-within:opacity-100',
+            )}
+          >
+            {fullscreen ? (
+              <button
+                onClick={toggleFullscreen}
+                aria-label="Exit fullscreen"
+                // Not clickable while faded out, so an invisible button can
+                // never swallow a click meant for YouTube's controls.
+                className={cn(
+                  'absolute right-4 top-4 inline-flex min-h-11 items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-[0.8125rem] font-medium text-white shadow-glass ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-black/85',
+                  // `focus:pointer-events-auto` keeps it activatable by keyboard
+                  // even while the pointer chrome is idle-hidden.
+                  chromeVisible ? 'pointer-events-auto' : 'pointer-events-none focus:pointer-events-auto',
+                )}
+              >
+                <Minimize2 size={16} />
+                Exit fullscreen
+              </button>
+            ) : (
+              <button
+                onClick={toggleFullscreen}
+                aria-label="Enter fullscreen"
+                // Not "press F": once focus is inside the YouTube iframe the
+                // parent never sees the key, so this button is the reliable path.
+                title="Fullscreen — use this button when YouTube has focus"
+                className="pointer-events-auto absolute right-3 top-3 grid h-11 w-11 place-items-center rounded-xl bg-black/45 text-white/85 opacity-70 shadow-glass ring-1 ring-white/15 backdrop-blur-md transition duration-[160ms] ease-swift hover:bg-black/65 hover:opacity-100"
+              >
+                <Maximize2 size={16} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Remote autoplay activation.
+            When a remote play arrives but the browser blocks unmuted autoplay,
+            the guest would otherwise sit silently on the thumbnail. Explain it and
+            offer one click to join at the room's current time. Small + centered so
+            it reads as intentional, not broken. */}
+        <AnimatePresence>
+          {needsPlaybackGesture && !failed && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-40 grid place-items-center bg-ink-950/70 px-6 text-center backdrop-blur-sm"
+            >
+              <div className="max-w-xs">
+                <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-white/[0.07] text-primary">
+                  <Play size={24} fill="currentColor" className="ml-0.5" />
+                </span>
+                <p className="font-display text-lg font-semibold text-primary">Join playback</p>
+                <p className="mx-auto mt-2 text-[0.8125rem] leading-relaxed text-supporting">
+                  Your browser needs one click before YouTube can play with sound on this device.
+                </p>
+                <Button variant="primary" size="md" className="mt-5" onClick={() => onJoinPlayback?.()}>
+                  <Play size={16} fill="currentColor" />
+                  Join now
+                </Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Playback error (invalid / private / unembeddable). The video can't be
+            played at all, so cover YouTube's own dead-end screen with a clear,
+            actionable state rather than a floating banner over it. */}
+        <AnimatePresence>
+          {failed && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-30 grid place-items-center bg-ink-950/85 px-6 text-center backdrop-blur-sm"
+            >
+              <div className="max-w-sm">
+                <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-rose-500/15 text-rose-300">
+                  <AlertTriangle size={24} />
+                </span>
+                {/* An API failure is about the PLAYER, not the video — say so,
+                    and offer a retry that reloads only this device's player. */}
+                <p className="font-display text-lg font-semibold text-primary">
+                  {failureKind === 'api' ? 'Couldn’t start the player' : 'This video can’t play here'}
+                </p>
+                <p className="mx-auto mt-2 text-[0.8125rem] leading-relaxed text-supporting">{failed}</p>
+                <p className="mx-auto mt-1 text-[0.75rem] leading-relaxed text-muted">
+                  {failureKind === 'api'
+                    ? 'The film is still on in this room — retrying just reloads the player on this device.'
+                    : 'Many music and studio videos block off-YouTube playback. Try another video, a direct link, or an Open Cinema title.'}
+                </p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                  {failureKind === 'api' && (
+                    <Button variant="primary" size="md" onClick={retryYouTube}>
+                      <RotateCw size={16} />
+                      Retry YouTube
+                    </Button>
+                  )}
+                  {onRequestSource && (
+                    <Button
+                      variant={failureKind === 'api' ? 'glass' : 'primary'}
+                      size="md"
+                      onClick={onRequestSource}
+                    >
+                      <Film size={16} />
+                      Choose something else
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -423,21 +846,19 @@ export function Player({
         'group/player relative isolate w-full overflow-hidden bg-black',
         // On phones the 16:9 box alone is too short to hold the empty state, so
         // give it a floor until there is enough width for the ratio to breathe.
-        fullscreen ? 'h-dvh rounded-none' : 'aspect-video min-h-[17rem] rounded-3xl sm:min-h-0',
+          // Cinema frame: a neutral hairline plus a controlled deep shadow so
+        // the screen reads as installed in the room rather than as another
+        // glass card. No coloured halo — the frame must never tint the
+        // picture. Radius drops one step at narrow widths. Fullscreen is
+        // deliberately frame-free: radius, border and shadow all removed.
+        fullscreen
+          ? 'h-dvh rounded-none'
+          : 'aspect-video min-h-[17rem] rounded-2xl border border-white/[0.09] shadow-[0_1px_0_0_rgba(255,255,255,0.07)_inset,0_32px_80px_-28px_rgba(0,0,0,0.95)] sm:min-h-0 sm:rounded-3xl',
         !showingControls && playing && 'cursor-none',
       )}
     >
-      {/* ---------- media ---------- */}
-      {source && ytId && isYouTube ? (
-        <YouTubeEngine
-          videoId={ytId}
-          handleRef={handleRef}
-          muted={muted}
-          volume={volume}
-          onReady={onReady}
-          onStateChange={setPlaying}
-        />
-      ) : source && mediaUrl ? (
+      {/* ---------- media (HTML5 / catalog / URL / local — YouTube is handled above) ---------- */}
+      {source && mediaUrl ? (
         // eslint-disable-next-line jsx-a11y/media-has-caption
         <video
           ref={videoRef}
@@ -454,24 +875,38 @@ export function Player({
             setFailed(null);
           }}
           onPause={() => setPlaying(false)}
-          onWaiting={() => setWaiting(true)}
-          onPlaying={() => setWaiting(false)}
-          onCanPlay={() => {
-            setWaiting(false);
-            onReady?.();
+          // Only a genuine mid-play stall is "buffering". A paused video firing
+          // `waiting` (e.g. during a seek to its first frame) must NOT spin.
+          onWaiting={() => {
+            if (!videoRef.current?.paused) setWaiting(true);
           }}
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+          // Ready is reported from ANY of these — never a single fragile event —
+          // and each clears a stale `waiting`. markReadyOnce runs resync once.
+          onLoadedMetadata={(e) => {
+            setDuration(e.currentTarget.duration || 0);
+            markReadyOnce();
+          }}
+          onLoadedData={markReadyOnce}
+          onCanPlay={markReadyOnce}
+          onCanPlayThrough={markReadyOnce}
+          onPlaying={() => {
+            setWaiting(false);
+            markReadyOnce();
+          }}
+          onTimeUpdate={() => waiting && setWaiting(false)}
+          onSeeked={() => setWaiting(false)}
           onProgress={(e) => {
             const v = e.currentTarget;
             if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
           }}
-          onError={() =>
+          onError={() => {
+            setFailureKind(null); // never offer the YouTube retry for HTML5
             setFailed(
               source.type === 'url'
                 ? 'That link could not be played. It may block embedding, or need a direct .mp4 / .webm URL.'
                 : 'This file could not be played in your browser.',
-            )
-          }
+            );
+          }}
         />
       ) : (
         <div className="absolute inset-0 grid place-items-center">{emptyState}</div>
@@ -481,20 +916,61 @@ export function Player({
       {source && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_45%,rgba(124,58,237,0.22),transparent_65%)]"
+          // The purple radial behind the picture tinted every film. Reflected
+          // light should be neutral and barely there, never a brand colour.
+          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,0.05),transparent_65%)]"
         />
       )}
 
-      {/* ---------- buffering ---------- */}
+      {/* ---------- paused scrim ----------
+          A native <video> has no chrome to hide, so on pause we keep the nicer
+          dimmed frozen frame. */}
       <AnimatePresence>
-        {waiting && (
+        {source && ready && !playing && !waiting && !failed && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="pointer-events-none absolute inset-0 grid place-items-center bg-black/25 backdrop-blur-[2px]"
+            transition={{ duration: 0.25 }}
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-10 bg-[radial-gradient(circle_at_50%_50%,rgba(0,0,0,0.55),rgba(0,0,0,0.35)_70%)]"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ---------- buffering / loading ----------
+          Shows during true startup or a genuine mid-play stall only — never a
+          stuck `waiting` flag on a paused, ready video (see shouldShowHtml5Loading). */}
+      <AnimatePresence>
+        {html5Loading && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-black/25 backdrop-blur-[2px]"
           >
-            <Loader2 className="animate-spin text-white/80" size={30} />
+            <span className="grid place-items-center gap-2">
+              <Loader2 className="animate-spin text-white/80" size={30} />
+              {html5Startup && <span className="text-[0.75rem] font-medium text-supporting">Loading…</span>}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ---------- top gradient + current title (with the controls) ---------- */}
+      <AnimatePresence>
+        {source && showingControls && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+            className="pointer-events-none absolute inset-x-0 top-0 z-30"
+          >
+            <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/70 via-black/30 to-transparent" />
+            <p className="relative truncate px-4 pt-3 text-[0.8125rem] font-medium text-white/85 sm:px-5 sm:pt-4">
+              {source.label}
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -515,23 +991,31 @@ export function Player({
 
       {overlay}
 
-      {/* ---------- centre play button ---------- */}
-      <AnimatePresence>
-        {source && !playing && !waiting && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.85 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            transition={{ type: 'spring', stiffness: 340, damping: 26 }}
-            onClick={togglePlay}
-            aria-label="Play"
-            className="absolute left-1/2 top-1/2 z-20 grid h-20 w-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white/12 shadow-glass backdrop-blur-2xl transition-colors hover:bg-white/22"
-          >
-            <span className="absolute inset-0 animate-pulse-ring rounded-full border border-white/25" />
-            <Play size={30} fill="currentColor" className="ml-1 text-white" />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {/* ---------- centre play button (only once the engine can accept it) ----------
+          Centered by a grid WRAPPER, not by `-translate-x/y-1/2` on the button:
+          framer-motion writes an inline `transform` for the scale animation,
+          which overrode the translate classes and pushed the button down-right
+          by half its size. The wrapper owns centering; framer only scales. */}
+      <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+        <AnimatePresence>
+          {source && ready && !playing && !waiting && !failed && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 26 }}
+              onClick={togglePlay}
+              aria-label="Play"
+              // Was a translucent glass disc with a perpetual pulse ring. A
+              // solid dark surface reads as a control rather than an effect,
+              // and stays legible over any frame behind it. 80px visual.
+              className="pointer-events-auto relative grid h-20 w-20 place-items-center rounded-full border border-white/20 bg-black/70 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.9)] transition-colors duration-[160ms] ease-swift hover:bg-black/80 hover:border-white/30"
+            >
+              <Play size={30} fill="currentColor" className="ml-1 text-white" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* ---------- controls ---------- */}
       <AnimatePresence>
@@ -558,11 +1042,12 @@ export function Player({
               />
 
               <div className="flex items-center gap-1 sm:gap-1.5">
-                <Tooltip label={playing ? 'Pause' : 'Play'} shortcut="Space">
+                <Tooltip label={!ready ? 'Loading…' : playing ? 'Pause' : 'Play'} shortcut="Space">
                   <button
                     onClick={togglePlay}
+                    disabled={!ready}
                     aria-label={playing ? 'Pause' : 'Play'}
-                    className="grid h-10 w-10 place-items-center rounded-xl text-white transition-colors hover:bg-white/12"
+                    className="grid h-11 w-11 place-items-center rounded-xl text-white transition-colors duration-[160ms] ease-swift hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                   >
                     {playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
                   </button>
@@ -572,7 +1057,7 @@ export function Player({
                   <button
                     onClick={() => seekBy(-10)}
                     aria-label="Back 10 seconds"
-                    className="hidden h-10 w-10 place-items-center rounded-xl text-white/80 transition-colors hover:bg-white/12 hover:text-white sm:grid"
+                    className="hidden h-11 w-11 place-items-center rounded-xl text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white sm:grid"
                   >
                     <RotateCcw size={17} />
                   </button>
@@ -581,7 +1066,7 @@ export function Player({
                   <button
                     onClick={() => seekBy(10)}
                     aria-label="Forward 10 seconds"
-                    className="hidden h-10 w-10 place-items-center rounded-xl text-white/80 transition-colors hover:bg-white/12 hover:text-white sm:grid"
+                    className="hidden h-11 w-11 place-items-center rounded-xl text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white sm:grid"
                   >
                     <RotateCw size={17} />
                   </button>
@@ -592,7 +1077,7 @@ export function Player({
                   <button
                     onClick={() => setMuted((m) => !m)}
                     aria-label={muted ? 'Unmute' : 'Mute'}
-                    className="grid h-10 w-10 place-items-center rounded-xl text-white/80 transition-colors hover:bg-white/12 hover:text-white"
+                    className="grid h-11 w-11 place-items-center rounded-xl text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white"
                   >
                     <VolumeIcon size={18} />
                   </button>
@@ -619,7 +1104,7 @@ export function Player({
 
                 <span className="ml-1 select-none whitespace-nowrap font-mono text-[0.6875rem] tabular-nums text-white/70 sm:text-[0.75rem]">
                   {formatTime(scrubbing ?? position)}
-                  <span className="text-white/30">&thinsp;/&thinsp;{formatTime(duration)}</span>
+                  <span className="text-muted">&thinsp;/&thinsp;{formatTime(duration)}</span>
                 </span>
 
                 {Math.abs(drift) > 0.6 && (
@@ -636,7 +1121,7 @@ export function Player({
                         onClick={() => setMenu(menu === 'quality' ? null : 'quality')}
                         aria-label="Video quality"
                         aria-expanded={menu === 'quality'}
-                        className="hidden h-10 items-center gap-1.5 rounded-xl px-2.5 text-[0.75rem] font-medium text-white/80 transition-colors hover:bg-white/12 hover:text-white sm:flex"
+                        className="hidden min-h-11 items-center gap-1.5 rounded-xl px-2.5 text-[0.75rem] font-medium text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white sm:flex"
                       >
                         <SlidersHorizontal size={15} />
                         {quality}
@@ -659,16 +1144,16 @@ export function Player({
                                 setMenu(null);
                               }}
                               className={cn(
-                                'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[0.8125rem] transition-colors',
+                                'flex min-h-11 w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[0.8125rem] transition-colors duration-[160ms] ease-swift',
                                 quality === q ? 'bg-white/12 text-white' : 'text-white/60 hover:bg-white/[0.07]',
                               )}
                             >
                               {q}
-                              {quality === q && <span className="h-1.5 w-1.5 rounded-full bg-electric-400" />}
+                              {quality === q && <span className="h-1.5 w-1.5 rounded-full bg-gold-400" />}
                             </button>
                           ))}
                           {!variants && (
-                            <p className="px-3 pb-1 pt-2 text-[0.625rem] leading-relaxed text-white/30">
+                            <p className="px-3 pb-1 pt-2 text-[0.6875rem] leading-relaxed text-supporting">
                               This source streams a single rendition; your browser adapts it automatically.
                             </p>
                           )}
@@ -684,7 +1169,7 @@ export function Player({
                         onClick={() => setMenu(menu === 'settings' ? null : 'settings')}
                         aria-label="Playback settings"
                         aria-expanded={menu === 'settings'}
-                        className="grid h-10 w-10 place-items-center rounded-xl text-white/80 transition-colors hover:bg-white/12 hover:text-white"
+                        className="grid h-11 w-11 place-items-center rounded-xl text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white"
                       >
                         <Settings2 size={17} />
                       </button>
@@ -698,7 +1183,7 @@ export function Player({
                           transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
                           className="absolute bottom-full right-0 mb-2 w-48 overflow-hidden rounded-2xl glass-deep p-1.5"
                         >
-                          <p className="flex items-center gap-2 px-3 py-2 text-eyebrow uppercase text-white/35">
+                          <p className="flex items-center gap-2 px-3 py-2 text-eyebrow uppercase text-muted">
                             <Gauge size={11} /> Speed
                           </p>
                           {RATES.map((r) => (
@@ -709,12 +1194,12 @@ export function Player({
                                 setMenu(null);
                               }}
                               className={cn(
-                                'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[0.8125rem] transition-colors',
+                                'flex min-h-11 w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[0.8125rem] transition-colors duration-[160ms] ease-swift',
                                 rate === r ? 'bg-white/12 text-white' : 'text-white/60 hover:bg-white/[0.07]',
                               )}
                             >
                               {r === 1 ? 'Normal' : `${r}×`}
-                              {rate === r && <span className="h-1.5 w-1.5 rounded-full bg-electric-400" />}
+                              {rate === r && <span className="h-1.5 w-1.5 rounded-full bg-gold-400" />}
                             </button>
                           ))}
                         </motion.div>
@@ -728,8 +1213,8 @@ export function Player({
                       aria-label="Toggle subtitles"
                       aria-pressed={captions}
                       className={cn(
-                        'grid h-10 w-10 place-items-center rounded-xl transition-colors hover:bg-white/12',
-                        captions ? 'text-electric-300' : 'text-white/80 hover:text-white',
+                        'grid h-11 w-11 place-items-center rounded-xl transition-colors hover:bg-white/12',
+                        captions ? 'text-gold-400' : 'text-white/80 hover:text-white',
                       )}
                     >
                       <Captions size={17} />
@@ -741,7 +1226,7 @@ export function Player({
                       <button
                         onClick={togglePiP}
                         aria-label="Picture in picture"
-                        className="hidden h-10 w-10 place-items-center rounded-xl text-white/80 transition-colors hover:bg-white/12 hover:text-white sm:grid"
+                        className="hidden h-11 w-11 place-items-center rounded-xl text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white sm:grid"
                       >
                         <PictureInPicture2 size={17} />
                       </button>
@@ -752,7 +1237,7 @@ export function Player({
                     <button
                       onClick={toggleFullscreen}
                       aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                      className="grid h-10 w-10 place-items-center rounded-xl text-white/80 transition-colors hover:bg-white/12 hover:text-white"
+                      className="grid h-11 w-11 place-items-center rounded-xl text-white/80 transition-colors duration-[160ms] ease-swift hover:bg-white/12 hover:text-white"
                     >
                       {fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
                     </button>

@@ -1,12 +1,14 @@
 export default function Loading() {
   return (
-    <div className="grid min-h-dvh place-items-center bg-ink-900">
+    <div className="grid min-h-dvh place-items-center bg-ink-950">
       <div className="flex flex-col items-center gap-5">
-        <span className="relative grid h-12 w-12 place-items-center">
-          <span className="absolute inset-0 animate-pulse-ring rounded-full border border-royal-400/50" />
-          <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-electric-400" />
-        </span>
-        <span className="text-eyebrow uppercase text-white/25">Warming the projector</span>
+        {/* One spinner. Was a royal pulse ring wrapped around a cyan-edged
+            spinner — two looping decorations for a state that only needs to say
+            "working". The label carries the meaning; the ring carried nothing.
+            `animate-spin` is collapsed by the global prefers-reduced-motion rule
+            in globals.css, and the label still explains the state without it. */}
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/15 border-t-gold-400" />
+        <span className="text-eyebrow uppercase text-supporting">Warming the projector</span>
       </div>
     </div>
   );

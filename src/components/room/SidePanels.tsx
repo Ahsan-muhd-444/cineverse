@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   Check,
   Crown,
@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { cn } from '@/lib/utils';
+import { describeConnection } from '@/lib/a11y';
 
 /* ==========================================================================
    Participants
@@ -70,14 +71,14 @@ export function Participants({
                   <button
                     onClick={() => onDecide(person.socketId, false)}
                     aria-label={`Deny ${person.name}`}
-                    className="grid h-8 w-8 place-items-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-rose-300"
+                    className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-rose-300"
                   >
                     <X size={14} />
                   </button>
                   <button
                     onClick={() => onDecide(person.socketId, true)}
                     aria-label={`Admit ${person.name}`}
-                    className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-500/25 text-emerald-100 transition-colors hover:bg-emerald-500/40"
+                    className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-500/25 text-emerald-100 transition-colors hover:bg-emerald-500/40"
                   >
                     <Check size={14} />
                   </button>
@@ -89,7 +90,7 @@ export function Participants({
       </AnimatePresence>
 
       <div>
-        <p className="mb-2.5 text-eyebrow uppercase text-white/30">
+        <p className="mb-2.5 text-eyebrow uppercase text-muted">
           In the room · {members.length}
         </p>
         <div className="space-y-1.5">
@@ -110,10 +111,10 @@ export function Participants({
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-[0.8125rem] font-medium text-white">
                     {member.name}
-                    {isMe && <span className="text-white/35">(you)</span>}
+                    {isMe && <span className="text-muted">(you)</span>}
                     {member.id === hostId && <Crown size={11} className="shrink-0 text-amber-300" />}
                   </p>
-                  <p className="mt-0.5 flex items-center gap-2 text-[0.6875rem] text-white/35">
+                  <p className="mt-0.5 flex items-center gap-2 text-[0.6875rem] text-supporting">
                     {member.media?.inCall ? (
                       <>
                         <span className="text-emerald-300">In call</span>
@@ -133,7 +134,7 @@ export function Participants({
                       <button
                         onClick={() => onTransferHost(member.id)}
                         aria-label={`Make ${member.name} the host`}
-                        className="grid h-8 w-8 place-items-center rounded-xl text-white/40 transition-colors hover:bg-white/10 hover:text-amber-300"
+                        className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-amber-300"
                       >
                         <Crown size={13} />
                       </button>
@@ -142,7 +143,7 @@ export function Participants({
                       <button
                         onClick={() => onKick(member.id)}
                         aria-label={`Remove ${member.name}`}
-                        className="grid h-8 w-8 place-items-center rounded-xl text-white/40 transition-colors hover:bg-white/10 hover:text-rose-300"
+                        className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-rose-300"
                       >
                         <UserMinus size={13} />
                       </button>
@@ -157,8 +158,8 @@ export function Participants({
 
       {members.length < 2 && (
         <div className="rounded-2xl border border-dashed border-white/12 p-4 text-center">
-          <p className="text-[0.8125rem] text-white/50">Just you so far</p>
-          <p className="mt-1 text-[0.6875rem] leading-relaxed text-white/30">
+          <p className="text-[0.8125rem] text-secondary">Just you so far</p>
+          <p className="mt-1 text-[0.6875rem] leading-relaxed text-supporting">
             Send the invite link and their seat fills in instantly.
           </p>
         </div>
@@ -197,11 +198,16 @@ export function RoomSettingsModal({
     <Modal open={open} onClose={onClose} title="Room settings" description="Host controls and your own preferences.">
       <div className="space-y-6">
         <section>
-          <h3 className="mb-1 flex items-center gap-2 text-eyebrow uppercase text-white/30">
+          <h3 className="mb-1 flex items-center gap-2 text-eyebrow uppercase text-muted">
             <ShieldCheck size={11} />
             The door
           </h3>
-          <div className={cn('rounded-2xl glass-soft p-3.5', !isHost && 'pointer-events-none opacity-50')}>
+          {/* Interaction is still blocked for non-hosts, but the group is no
+              longer dimmed as a whole: blanket opacity made the labels and the
+              descriptions — the very text that explains what a non-host cannot
+              change — hard to read. Each Switch already renders its own quiet
+              disabled control, and the explanatory line below states why. */}
+          <div className={cn('rounded-2xl glass-soft p-3.5', !isHost && 'pointer-events-none')}>
             <Switch
               checked={settings.locked}
               onChange={(locked) => onUpdate({ locked })}
@@ -238,12 +244,17 @@ export function RoomSettingsModal({
                     className="overflow-hidden"
                   >
                     <div className="flex gap-2 pt-3">
+                      {/* Semantically disabled, not just pointer-blocked: the
+                          wrapper's `pointer-events-none` stops a mouse but does
+                          nothing for the keyboard, so a non-host could still Tab
+                          into the field and press Set. */}
                       <Input
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="New passphrase"
                         icon={<Lock size={14} />}
                         maxLength={64}
+                        disabled={!isHost}
                       />
                       <Button
                         variant="glass"
@@ -251,7 +262,7 @@ export function RoomSettingsModal({
                           onUpdate({ password });
                           setPassword('');
                         }}
-                        disabled={!password}
+                        disabled={!isHost || !password}
                       >
                         Set
                       </Button>
@@ -262,12 +273,12 @@ export function RoomSettingsModal({
             </div>
           </div>
           {!isHost && (
-            <p className="mt-2 px-1 text-[0.6875rem] text-white/30">Only the host can change these.</p>
+            <p className="mt-2 px-1 text-[0.6875rem] text-muted">Only the host can change these.</p>
           )}
         </section>
 
         <section>
-          <h3 className="mb-1 text-eyebrow uppercase text-white/30">Your experience</h3>
+          <h3 className="mb-1 text-eyebrow uppercase text-muted">Your experience</h3>
           <div className="rounded-2xl glass-soft p-3.5">
             <Switch
               checked={appSettings.highContrast}
@@ -295,7 +306,7 @@ export function RoomSettingsModal({
         </section>
 
         <section>
-          <h3 className="mb-3 text-eyebrow uppercase text-white/30">Keyboard</h3>
+          <h3 className="mb-3 text-eyebrow uppercase text-muted">Keyboard</h3>
           <div className="grid grid-cols-2 gap-2 text-[0.75rem]">
             {[
               ['Space / K', 'Play or pause'],
@@ -308,8 +319,8 @@ export function RoomSettingsModal({
               ['P', 'Picture in picture'],
             ].map(([key, action]) => (
               <div key={key} className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                <span className="text-white/45">{action}</span>
-                <kbd className="rounded-md border border-white/12 bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.625rem] text-white/70">
+                <span className="text-secondary">{action}</span>
+                <kbd className="rounded-md border border-white/12 bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.6875rem] text-secondary">
                   {key}
                 </kbd>
               </div>
@@ -332,7 +343,7 @@ export function ReactionLayer({ socket }: { socket: { on: Function; off: Functio
     const onReaction = ({ emoji }: { emoji: string }) => {
       const id = Date.now() + Math.random();
       setItems((prev) => [...prev, { id, emoji, x: 10 + Math.random() * 80 }]);
-      setTimeout(() => setItems((prev) => prev.filter((i) => i.id !== id)), 3200);
+      setTimeout(() => setItems((prev) => prev.filter((i) => i.id !== id)), 2400);
     };
     socket.on('room:reaction', onReaction);
     return () => socket.off('room:reaction', onReaction);
@@ -348,7 +359,8 @@ export function ReactionLayer({ socket }: { socket: { on: Function; off: Functio
             animate={{ opacity: [0, 1, 1, 0], y: -260, scale: [0.4, 1.25, 1, 0.9], x: [0, 14, -10, 6] }}
             exit={{ opacity: 0 }}
             transition={{ duration: 3, ease: 'easeOut' }}
-            className="absolute bottom-16 text-4xl drop-shadow-[0_4px_18px_rgba(0,0,0,0.6)]"
+            // Spawn above the control bar so reactions never sit on the seek bar.
+            className="absolute bottom-28 text-4xl drop-shadow-[0_4px_18px_rgba(0,0,0,0.6)]"
             style={{ left: `${item.x}%` }}
           >
             {item.emoji}
@@ -376,8 +388,10 @@ export function ConnectionPill({ quality, latency }: { quality: string; latency:
             : 'warn';
 
   return (
-    <Badge tone={tone as 'success' | 'electric' | 'warn' | 'danger'}>
-      <span className="flex items-end gap-[2px]">
+    // Colour carries the tone, but never the meaning: the bars are decorative
+    // and the state is spelled out in text and in the accessible name.
+    <Badge tone={tone as 'success' | 'electric' | 'warn' | 'danger'} aria-label={describeConnection(quality, latency)}>
+      <span aria-hidden className="flex items-end gap-[2px]">
         {[3, 6, 9].map((h, i) => (
           <span
             key={h}
@@ -408,7 +422,7 @@ export function RoomClock() {
 
   if (!now) return null;
   return (
-    <span className="font-mono text-[0.75rem] tabular-nums text-white/40">
+    <span className="font-mono text-[0.75rem] tabular-nums text-muted">
       {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
     </span>
   );

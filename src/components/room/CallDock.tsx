@@ -33,14 +33,19 @@ function StreamTile({
   color?: string;
 }) {
   const ref = React.useRef<HTMLVideoElement>(null);
-  const [hasVideo, setHasVideo] = React.useState(stream.getVideoTracks().some((t) => t.enabled));
+  // A live, enabled, UNMUTED video track means real picture. For a remote peer,
+  // `muted` flips true when they disable their camera (Option-1 camera-off), so
+  // the tile falls back to the avatar instead of showing a frozen/black frame.
+  const hasPicture = (s: MediaStream) => s.getVideoTracks().some((t) => t.enabled && !t.muted && t.readyState === 'live');
+  const [hasVideo, setHasVideo] = React.useState(() => hasPicture(stream));
 
   React.useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
-    const check = () => setHasVideo(stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live'));
+    const check = () => setHasVideo(hasPicture(stream));
     check();
-    const id = setInterval(check, 1200);
+    const id = setInterval(check, 1000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream]);
 
   return (
@@ -58,7 +63,7 @@ function StreamTile({
           <Avatar name={label} color={color} size={40} speaking />
         </div>
       )}
-      <span className="absolute bottom-1.5 left-1.5 rounded-lg bg-black/60 px-1.5 py-0.5 text-[0.625rem] text-white/85 backdrop-blur-sm">
+      <span className="absolute bottom-1.5 left-1.5 rounded-lg bg-black/60 px-1.5 py-0.5 text-[0.6875rem] text-white backdrop-blur-sm">
         {label}
       </span>
     </div>
@@ -80,36 +85,58 @@ export function CallDock({
   const quality =
     call.stats.rtt === 0 ? 'measuring' : call.stats.rtt < 90 ? 'excellent' : call.stats.rtt < 220 ? 'good' : 'weak';
 
+  // Plain-language call state, so a slow connect never reads as "frozen".
+  const STATUS_COPY: Record<typeof call.status, { text: string; tone: 'info' | 'good' | 'warn' } | null> = {
+    idle: null,
+    requesting: { text: 'Asking for mic/camera…', tone: 'info' },
+    waiting: { text: 'Waiting for someone to join…', tone: 'info' },
+    connecting: { text: 'Connecting…', tone: 'info' },
+    connected: { text: 'Connected', tone: 'good' },
+    reconnecting: { text: 'Reconnecting…', tone: 'warn' },
+    failed: { text: 'Connection failed — check your network (a TURN server may be needed).', tone: 'warn' },
+  };
+  const statusInfo = STATUS_COPY[call.status];
+  const waitingForMedia = active && call.status === 'connected' && call.remoteStreams.length === 0;
+  // The permission prompt is open: mode is still 'idle', so this state must be
+  // surfaced outside the `active` block or the dock looks frozen.
+  const requesting = call.status === 'requesting';
+
   return (
     <div className="flex flex-col gap-3">
       {/* ---------- incoming ---------- */}
       <AnimatePresence>
         {call.incoming && (
           <motion.div
+            // Announced, not just drawn: a ringing call that only appears
+            // visually is invisible to a screen-reader user until it stops.
+            role="alert"
             initial={{ opacity: 0, y: -10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8 }}
-            className="flex items-center gap-3 rounded-2xl border border-electric-400/30 bg-electric-500/10 p-3"
+            // Stable neutral panel. The cyan wash and the pulsing ring around
+            // the caller's avatar were doing the job of a status marker at ten
+            // times the volume; one small live dot says the same thing.
+            className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.05] p-3"
           >
             <span className="relative">
               <Avatar name={call.incoming.name} size={36} />
-              <span className="absolute inset-0 animate-pulse-ring rounded-full border-2 border-electric-400" />
+              <span aria-hidden className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-ink-950 bg-electric-400" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[0.8125rem] font-medium text-white">{call.incoming.name}</p>
-              <p className="text-[0.6875rem] text-white/50">Incoming {call.incoming.mode} call</p>
+              <p className="truncate text-[0.8125rem] font-medium text-primary">{call.incoming.name}</p>
+              <p className="text-[0.6875rem] text-muted">Incoming {call.incoming.mode} call</p>
             </div>
             <button
               onClick={call.decline}
               aria-label="Decline call"
-              className="grid h-9 w-9 place-items-center rounded-xl bg-rose-500/20 text-rose-200 transition-colors hover:bg-rose-500/35"
+              className="grid h-11 w-11 place-items-center rounded-xl bg-rose-500/20 text-rose-200 transition-colors hover:bg-rose-500/35"
             >
               <PhoneOff size={15} />
             </button>
             <button
               onClick={call.accept}
               aria-label="Accept call"
-              className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/25 text-emerald-100 transition-colors hover:bg-emerald-500/40"
+              className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-500/25 text-emerald-100 transition-colors hover:bg-emerald-500/40"
             >
               <Phone size={15} />
             </button>
@@ -141,13 +168,39 @@ export function CallDock({
               ))}
             </div>
 
-            <div className="mt-2 flex items-center gap-1.5 px-1 text-[0.625rem] text-white/35">
-              <Wifi size={10} />
-              <span className="capitalize">{quality}</span>
-              {call.stats.rtt > 0 && <span>· {call.stats.rtt} ms</span>}
-              {call.stats.loss > 0.02 && <span>· {(call.stats.loss * 100).toFixed(0)}% loss</span>}
-              <span className="ml-auto">Noise suppression on</span>
+            {/* status line: what the call is doing right now */}
+            <div className="mt-2 flex items-center gap-1.5 px-1 text-[0.6875rem]">
+              {statusInfo && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1.5',
+                    statusInfo.tone === 'good' && 'text-emerald-300',
+                    statusInfo.tone === 'warn' && 'text-amber-300',
+                    statusInfo.tone === 'info' && 'text-supporting',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      statusInfo.tone === 'good' && 'bg-emerald-400',
+                      statusInfo.tone === 'warn' && 'animate-pulse bg-amber-400',
+                      statusInfo.tone === 'info' && 'animate-pulse bg-white/50',
+                    )}
+                  />
+                  {waitingForMedia ? 'Connected — waiting for their video/audio…' : statusInfo.text}
+                </span>
+              )}
             </div>
+
+            {call.status === 'connected' && (
+              <div className="mt-1 flex items-center gap-1.5 px-1 text-[0.6875rem] text-muted">
+                <Wifi size={10} />
+                <span className="capitalize">{quality}</span>
+                {call.stats.rtt > 0 && <span>· {call.stats.rtt} ms</span>}
+                {call.stats.loss > 0.02 && <span>· {(call.stats.loss * 100).toFixed(0)}% loss</span>}
+                <span className="ml-auto">Noise suppression on</span>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -156,11 +209,25 @@ export function CallDock({
       <div className="flex items-center gap-1.5">
         {!active ? (
           <>
-            <Button variant="glass" size="sm" className="flex-1" onClick={() => call.start('audio')}>
+            {/* Disabled while the browser permission prompt is open, so a second
+                click can't open a second prompt / acquire a second stream. */}
+            <Button
+              variant="glass"
+              size="sm"
+              className="!h-11 flex-1"
+              disabled={requesting}
+              onClick={() => call.start('audio')}
+            >
               <Phone size={14} />
               Voice
             </Button>
-            <Button variant="glass" size="sm" className="flex-1" onClick={() => call.start('video')}>
+            <Button
+              variant="glass"
+              size="sm"
+              className="!h-11 flex-1"
+              disabled={requesting}
+              onClick={() => call.start('video')}
+            >
               <Video size={14} />
               Video
             </Button>
@@ -173,7 +240,7 @@ export function CallDock({
                 aria-label={call.micOn ? 'Mute microphone' : 'Unmute microphone'}
                 aria-pressed={!call.micOn}
                 className={cn(
-                  'grid h-10 w-10 place-items-center rounded-xl transition-colors',
+                  'grid h-11 w-11 place-items-center rounded-xl transition-colors',
                   call.micOn ? 'glass-soft text-white hover:bg-white/12' : 'bg-rose-500/25 text-rose-200',
                 )}
               >
@@ -187,8 +254,8 @@ export function CallDock({
                 aria-label={call.camOn ? 'Turn camera off' : 'Turn camera on'}
                 aria-pressed={!call.camOn}
                 className={cn(
-                  'grid h-10 w-10 place-items-center rounded-xl transition-colors',
-                  call.camOn ? 'glass-soft text-white hover:bg-white/12' : 'bg-white/[0.06] text-white/45',
+                  'grid h-11 w-11 place-items-center rounded-xl transition-colors',
+                  call.camOn ? 'glass-soft text-white hover:bg-white/12' : 'bg-white/[0.06] text-muted',
                 )}
               >
                 {call.camOn ? <Video size={16} /> : <VideoOff size={16} />}
@@ -201,7 +268,7 @@ export function CallDock({
                 aria-label={call.sharing ? 'Stop screen share' : 'Share screen'}
                 aria-pressed={call.sharing}
                 className={cn(
-                  'grid h-10 w-10 place-items-center rounded-xl transition-colors',
+                  'grid h-11 w-11 place-items-center rounded-xl transition-colors',
                   call.sharing ? 'bg-electric-500/25 text-electric-200' : 'glass-soft text-white hover:bg-white/12',
                 )}
               >
@@ -212,13 +279,21 @@ export function CallDock({
             <button
               onClick={call.hangUp}
               aria-label="End call"
-              className="ml-auto grid h-10 w-10 place-items-center rounded-xl bg-rose-500/85 text-white transition-transform hover:scale-105"
+              className="ml-auto grid h-11 w-11 place-items-center rounded-xl bg-rose-500/85 text-white transition-colors duration-[160ms] ease-swift hover:bg-rose-500"
             >
               <PhoneOff size={16} />
             </button>
           </>
         )}
       </div>
+
+      {/* Shown before the call is active (mode is still 'idle' during the prompt). */}
+      {requesting && !active && (
+        <p className="flex items-center gap-1.5 px-1 text-[0.6875rem] text-supporting">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/50" />
+          Asking for mic/camera…
+        </p>
+      )}
 
       {call.error && <p className="px-1 text-[0.6875rem] text-rose-300">{call.error}</p>}
     </div>

@@ -123,7 +123,7 @@ export function Explorer() {
                 <button
                   onClick={() => setQuery('')}
                   aria-label="Clear search"
-                  className="grid h-7 w-7 place-items-center rounded-lg text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+                  className="grid h-11 w-11 place-items-center rounded-lg text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary"
                 >
                   <X size={13} />
                 </button>
@@ -139,10 +139,12 @@ export function Explorer() {
               onClick={() => setTab(t.id)}
               aria-pressed={tab === t.id}
               className={cn(
-                'inline-flex shrink-0 items-center gap-2 rounded-2xl px-4 py-2.5 text-[0.8125rem] font-medium transition-all duration-400 ease-glide',
+                'relative inline-flex min-h-11 shrink-0 items-center gap-2 rounded-2xl px-4 text-[0.8125rem] font-medium transition-colors duration-[180ms] ease-swift',
                 tab === t.id
-                  ? 'bg-white text-black shadow-[0_10px_30px_-12px_rgba(255,255,255,0.5)]'
-                  : 'glass-soft text-white/55 hover:text-white',
+                  // Neutral raised surface with a small gold underline, rather
+                  // than a white-filled pill under a large white glow.
+                  ? 'bg-white/[0.10] text-primary after:absolute after:inset-x-4 after:bottom-1 after:h-0.5 after:rounded-full after:bg-gold-400'
+                  : 'glass-soft text-secondary hover:text-primary',
               )}
             >
               {t.icon}
@@ -155,10 +157,11 @@ export function Explorer() {
           <button
             onClick={() => setGenre(null)}
             className={cn(
-              'shrink-0 rounded-full border px-3.5 py-1.5 text-xs transition-all duration-300',
+              'inline-flex min-h-11 shrink-0 items-center rounded-full border px-3.5 text-xs',
+              'transition-colors duration-[160ms] ease-swift',
               genre === null
-                ? 'border-electric-400/50 bg-electric-500/15 text-electric-200'
-                : 'border-white/10 text-white/45 hover:border-white/25 hover:text-white',
+                ? 'border-gold-400/60 bg-gold-400/10 text-gold-300'
+                : 'border-white/10 text-secondary hover:border-white/25 hover:text-primary',
             )}
           >
             All genres
@@ -168,10 +171,11 @@ export function Explorer() {
               key={g}
               onClick={() => setGenre(genre === g ? null : g)}
               className={cn(
-                'shrink-0 rounded-full border px-3.5 py-1.5 text-xs transition-all duration-300',
+                'inline-flex min-h-11 shrink-0 items-center rounded-full border px-3.5 text-xs',
+                'transition-colors duration-[160ms] ease-swift',
                 genre === g
-                  ? 'border-royal-400/50 bg-royal-500/15 text-royal-200'
-                  : 'border-white/10 text-white/45 hover:border-white/25 hover:text-white',
+                  ? 'border-gold-400/60 bg-gold-400/10 text-gold-300'
+                  : 'border-white/10 text-secondary hover:border-white/25 hover:text-primary',
               )}
             >
               {g}
@@ -186,7 +190,7 @@ export function Explorer() {
           {searching ? (
             <motion.div
               key="grid"
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 7 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
@@ -200,7 +204,7 @@ export function Explorer() {
                 </div>
               ) : results.length ? (
                 <>
-                  <p className="mb-6 text-[0.8125rem] text-white/35">
+                  <p className="mb-6 text-[0.8125rem] text-muted">
                     {results.length} {results.length === 1 ? 'title' : 'titles'}
                   </p>
                   <div className="flex flex-wrap gap-4 sm:gap-5">
@@ -232,7 +236,7 @@ export function Explorer() {
           ) : (
             <motion.div
               key="rows"
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 7 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}

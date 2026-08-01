@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Type check, build, realtime tests
+    name: Type check, unit, build, realtime
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -21,6 +21,11 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
+      # node-version-file: .nvmrc pins the SAME version the tests require. The
+      # unit suites import .ts modules directly and rely on Node's native,
+      # unflagged type stripping (stable from 22.18.0), so an older Node would
+      # fail to run a single test — which is exactly why the engine floor and
+      # .nvmrc were raised to match.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -28,10 +33,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict
 
       - name: Type check
         run: npm run typecheck
+
+      # The unit suite was previously NOT run in CI — a real gap. It is the
+      # cheapest and broadest signal, so it runs before the build.
+      - name: Unit tests
+        run: npm test
 
       - name: Build
         run: npm run build
@@ -50,4 +60,58 @@ jobs:
           exit 1
 
       - name: Realtime test suite
-        run: node scripts/e2e-realtime.js
+        run: ROOM_RECONNECT_GRACE_MS=500 node scripts/e2e-realtime.js
+
+  browser:
+    name: Real-browser multipart suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --engine-strict
+
+      # The direct runner (no Playwright Test workers) boots the app + mock
+      # bucket and drives Chromium itself. Only the browser binary + its OS deps
+      # are needed here.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      # The GitHub runner is a container where Chromium's sandbox is unavailable,
+      # so --no-sandbox is opted in EXPLICITLY (never silently on a desktop).
+      - name: Direct browser suite
+        env:
+          BROWSER_TEST_NO_SANDBOX: '1'
+          NODE_ENV: production
+        run: npm run test:browser:direct
+
+      # High-cycle churn (cancel/pause/terminal/refresh) that proves the engine
+      # leaks nothing across many transitions in a real browser. Same stack, same
+      # single-process runner, --stress mode.
+      - name: Direct browser STRESS suite
+        env:
+          BROWSER_TEST_NO_SANDBOX: '1'
+          NODE_ENV: production
+        run: npm run test:browser:direct:stress
+
+      - name: Upload browser result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-results
+          path: |
+            .artifacts/browser/direct-results.json
+            .artifacts/browser/direct-stress-results.json
+          if-no-files-found: warn

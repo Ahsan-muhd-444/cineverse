@@ -92,9 +92,18 @@ if one side buffers.
 | Source | How it works |
 | --- | --- |
 | **Open Cinema** | A built-in catalog of openly licensed films that stream instantly, so a new room never starts with an empty screen. |
+| **Recommended movies** | A curated catalog of 40–50 **official** YouTube trailers across Punjabi, Bollywood and Hollywood. One click opens a room already playing the pick — both of you on the same synced player. Every link is verified live (`npm run validate:youtube-catalog`). |
 | **Direct video URL** | Any `.mp4`, `.webm` or `.m3u8` link. |
 | **YouTube** | Driven through the IFrame API and synced identically to a native video. |
 | **A local file** | You each open your own copy. Nothing is uploaded, nothing is re-encoded, and the playheads are still kept in step. |
+
+> **Deployment mode — demo/beta.** Hosted uploads (sharing one local file so both
+> sides stream it, up to 3 GiB via S3 multipart) are fully built and tested but
+> **disabled unless S3 is configured**: in production without an S3 bucket the
+> picker shows *"Uploads are not available in this demo yet."* rather than writing
+> real videos to an ephemeral disk. Built-in recommendations need no storage and
+> work everywhere. Enabling hosted uploads (real S3 staging) and MKV→MP4
+> conversion are tracked as future work.
 
 ## Screens
 
@@ -111,7 +120,9 @@ if one side buffers.
 
 ## Getting started
 
-Requires Node 18.18 or newer (`.nvmrc` pins 20.11.1).
+Requires Node 22.18.0 or newer (`.nvmrc` pins 22.18.0, and `package.json`
+enforces it). The unit suites import `.ts` modules directly and rely on Node's
+native type stripping, which is stable from 22.18.0.
 
 ```bash
 git clone https://github.com/Ahsan-muhd-444/cineverse.git

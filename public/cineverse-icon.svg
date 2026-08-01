@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="CineVerse">
+  <!--
+    Browser-tab mark. Same visual language as the header wordmark
+    (src/components/layout/Header.tsx): a near-black rounded tile, a restrained
+    gold hairline, and the gold stroked clapperboard — gold as a detail, not a
+    fill. Replaces the purple -> blue -> cyan gradient tile, which was the last
+    place the retired accent palette still shipped.
+
+    No gradient, no glow, no purple/blue/cyan. Flat colour only, so it stays
+    legible when the browser renders it into a 16x16 tab slot.
+  -->
+  <rect width="64" height="64" rx="18" fill="#0d0d0f"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="17.25" fill="none" stroke="#DDB25C" stroke-opacity="0.3" stroke-width="1.5"/>
+  <!--
+    lucide-react "Clapperboard" geometry, unchanged, so the tab mark and the
+    header mark are literally the same drawing. Scaled 1.75x and centred on its
+    own bounding box; the stroke is carried a little heavier than the header's
+    2.2 because at 16x16 a hairline stroke disappears entirely.
+  -->
+  <g transform="translate(11.83 11.88) scale(1.75)"
+     fill="none" stroke="#DDB25C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/>
+    <path d="m6.2 5.3 3.1 3.9"/>
+    <path d="m12.4 3.4 3.1 4"/>
+    <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>
+  </g>
+</svg>

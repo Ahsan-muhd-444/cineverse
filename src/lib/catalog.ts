@@ -14,7 +14,7 @@ import type { Movie } from './types';
 
 const CDN = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample';
 
-export const CATALOG: Movie[] = [
+const RAW_CATALOG: Movie[] = [
   {
     id: 'big-buck-bunny',
     title: 'Big Buck Bunny',
@@ -187,6 +187,27 @@ export const CATALOG: Movie[] = [
   },
 ];
 
+/**
+ * Real poster images for the titles that have an OFFICIAL one — the verified
+ * thumbnail from each film's official upload (the Blender Foundation's YouTube
+ * channel, confirmed via oEmbed). Titles with no entry keep the generated art
+ * (`posterArt`); `MovieCard` swaps to it automatically on any load error, so a card
+ * is never broken. The five "For Bigger …" clips are Google sample/test reels with
+ * no official standalone upload, so they intentionally have no real poster.
+ */
+const REAL_POSTERS: Record<string, string> = {
+  'big-buck-bunny': 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+  sintel: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+  'tears-of-steel': 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
+  'elephants-dream': 'https://i.ytimg.com/vi/TLkA0RELQ1g/hqdefault.jpg',
+};
+
+export const CATALOG: Movie[] = RAW_CATALOG.map((m) => ({
+  ...m,
+  poster: REAL_POSTERS[m.id] ?? m.poster,
+  backdrop: REAL_POSTERS[m.id] ?? m.backdrop,
+}));
+
 export const GENRES = Array.from(new Set(CATALOG.flatMap((m) => m.genres))).sort();
 
 export function findMovie(id: string): Movie | undefined {
@@ -210,7 +231,8 @@ export const ROWS: { id: string; title: string; subtitle: string; items: Movie[]
     id: 'trending',
     title: 'Trending in CineVerse',
     subtitle: 'What rooms are opening with this week',
-    items: [CATALOG[1], CATALOG[2], CATALOG[0], CATALOG[3], CATALOG[4]].filter(Boolean),
+    // The four Blender open films — each with a real, verified poster.
+    items: [CATALOG[1], CATALOG[2], CATALOG[0], CATALOG[3]].filter(Boolean),
   },
   {
     id: 'features',

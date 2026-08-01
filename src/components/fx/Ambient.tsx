@@ -9,12 +9,20 @@ import { cn } from '@/lib/utils';
    ========================================================================== */
 
 export function Aurora({ className, intensity = 1 }: { className?: string; intensity?: number }) {
+  // Was four saturated fields — violet 0.55, cyan 0.34, blue 0.42, pink 0.20 —
+  // drifting at 0.75 opacity. Four competing hues is what made the product read
+  // as generic SaaS rather than cinema. Now three low-saturation warm fields at
+  // roughly a fifth of the former strength: the room should feel like a dark
+  // auditorium with a little projector spill, not a colour wash.
   const blobs = React.useMemo(
     () => [
-      { color: 'rgba(124,58,237,0.55)', size: '52vw', top: '-14%', left: '-8%', delay: '0s', duration: '24s' },
-      { color: 'rgba(34,211,238,0.34)', size: '44vw', top: '18%', left: '58%', delay: '-7s', duration: '29s' },
-      { color: 'rgba(59,108,246,0.42)', size: '48vw', top: '52%', left: '6%', delay: '-13s', duration: '26s' },
-      { color: 'rgba(244,114,182,0.20)', size: '34vw', top: '66%', left: '62%', delay: '-4s', duration: '32s' },
+      // Rendered-screenshot correction: at these values the fields summed into a
+      // page-wide amber cast — a sepia filter over the whole product rather than
+      // the occasional projector spill they were meant to be. Roughly halved,
+      // and the warm pair is now outweighed by the neutral one.
+      { color: 'rgba(221,178,92,0.055)', size: '52vw', top: '-14%', left: '-8%', delay: '0s', duration: '24s' },
+      { color: 'rgba(168,122,43,0.04)', size: '44vw', top: '18%', left: '58%', delay: '-7s', duration: '29s' },
+      { color: 'rgba(255,255,255,0.05)', size: '48vw', top: '52%', left: '6%', delay: '-13s', duration: '26s' },
     ],
     [],
   );
@@ -31,7 +39,7 @@ export function Aurora({ className, intensity = 1 }: { className?: string; inten
             height: b.size,
             top: b.top,
             left: b.left,
-            opacity: 0.75 * intensity,
+            opacity: 0.55 * intensity,
             animationDelay: b.delay,
             animationDuration: b.duration,
           }}
@@ -135,8 +143,10 @@ export function Particles({
         r: Math.random() * 1.6 + 0.4,
         vx: (Math.random() - 0.5) * speed,
         vy: -(Math.random() * speed + speed * 0.3),
-        a: Math.random() * 0.5 + 0.12,
-        hue: Math.random() > 0.6 ? 265 : 190,
+        // Warm-neutral projector dust. Was violet (265) and cyan (190) at 90%
+        // saturation, which read as sci-fi rather than as a lit room.
+        a: Math.random() * 0.28 + 0.06,
+        hue: 38,
       }));
     };
 
@@ -165,12 +175,10 @@ export function Particles({
 
         ctx.beginPath();
         ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${d.hue}, 90%, 78%, ${d.a})`;
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = `hsla(${d.hue}, 90%, 70%, ${d.a * 0.8})`;
+        // No shadow: a glow on every mote is what made this read as an effect.
+        ctx.fillStyle = `hsla(${d.hue}, 24%, 88%, ${d.a})`;
         ctx.fill();
       }
-      ctx.shadowBlur = 0;
       if (running) raf = requestAnimationFrame(draw);
     };
 
@@ -200,15 +208,32 @@ export function Particles({
    Ambient stack — the standard background for full-page routes.
    ========================================================================== */
 
-export function AmbientBackdrop({ withParticles = true }: { withParticles?: boolean }) {
+/**
+ * The standard background for full-page routes.
+ *
+ * Was six simultaneous layers — aurora, canvas particles, a cursor-following
+ * spotlight, grain, a page-wide vignette and a horizon rule. Stacked, they read
+ * as an interactive visual effect competing with the content; a cinema should
+ * read as a dark room you stopped noticing.
+ *
+ * Now two: one restrained warm field, plus the grain that `Aurora` already
+ * carries as texture.
+ *
+ *  - Spotlight removed. A light that chases the cursor is a landing-page trick,
+ *    and it ran a rAF loop for the whole session.
+ *  - Particles off by default. `withParticles` is kept so callers still compile
+ *    and can opt in; the dust is now warm-neutral, not purple and cyan.
+ *  - Page-wide vignette removed: it darkened functional UI. The room keeps its
+ *    own vignette around the player, which is where it belongs.
+ *  - Horizon rule removed — decoration standing in for hierarchy.
+ *
+ * `Spotlight` and `Particles` remain exported; nothing about their API changed.
+ */
+export function AmbientBackdrop({ withParticles = false }: { withParticles?: boolean }) {
   return (
     <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-ink-900">
       <Aurora />
       {withParticles && <Particles />}
-      <Spotlight />
-      <div className="absolute inset-0 vignette" />
-      {/* A faint horizon line keeps the black from reading as empty */}
-      <div className="absolute inset-x-0 top-[62%] h-px bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
     </div>
   );
 }

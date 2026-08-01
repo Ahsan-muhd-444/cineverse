@@ -5,6 +5,9 @@
 
 # testing
 /coverage
+# Release-gate and stress-run evidence: logs, E2E result JSON, server output.
+# Generated per run and useful only locally.
+/.artifacts/
 
 # next.js
 /.next/
@@ -36,7 +39,13 @@ yarn-error.log*
 .vscode/
 .idea/
 
+# local AI-assistant config (hooks, machine-specific settings) — never source
+.claude/
+
 # scratch
 /screenshots/
 /walkthrough/
 /test-clip.*
+
+# uploaded video (dev filesystem storage adapter)
+/.uploads/

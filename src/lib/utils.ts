@@ -55,24 +55,7 @@ export function colorFrom(seed: string): string {
   return `hsl(${hue} 78% 66%)`;
 }
 
-export function isYouTubeUrl(url: string): boolean {
-  return /(?:youtube\.com|youtu\.be)/i.test(url);
-}
-
-export function youTubeId(url: string): string | null {
-  const patterns = [
-    /(?:youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/i,
-    /(?:youtu\.be\/)([\w-]{11})/i,
-    /(?:youtube\.com\/embed\/)([\w-]{11})/i,
-    /(?:youtube\.com\/shorts\/)([\w-]{11})/i,
-    /(?:youtube\.com\/live\/)([\w-]{11})/i,
-  ];
-  for (const p of patterns) {
-    const m = url.match(p);
-    if (m) return m[1];
-  }
-  return /^[\w-]{11}$/.test(url.trim()) ? url.trim() : null;
-}
+// YouTube detection/parsing lives in src/lib/media.ts (single source of truth).
 
 export function normalizeRoomCode(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);

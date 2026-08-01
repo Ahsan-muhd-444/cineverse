@@ -57,14 +57,14 @@ export function MovieRow({ row, className }: { row: Row; className?: string }) {
           <h2 id={`row-${row.id}`} className="font-display text-display-sm text-white">
             {row.title}
           </h2>
-          {row.subtitle && <p className="mt-1 text-[0.8125rem] text-white/40">{row.subtitle}</p>}
+          {row.subtitle && <p className="mt-1 text-[0.8125rem] text-supporting">{row.subtitle}</p>}
         </div>
         <div className="hidden gap-1.5 sm:flex">
           <button
             onClick={() => nudge(-1)}
             disabled={edges.start}
             aria-label={`Scroll ${row.title} left`}
-            className="grid h-9 w-9 place-items-center rounded-xl glass-soft text-white/60 transition-all hover:text-white disabled:opacity-25"
+            className="grid h-11 w-11 place-items-center rounded-xl glass-soft text-secondary transition-colors duration-[160ms] ease-swift hover:text-primary disabled:text-decorative"
           >
             <ChevronLeft size={16} />
           </button>
@@ -72,7 +72,7 @@ export function MovieRow({ row, className }: { row: Row; className?: string }) {
             onClick={() => nudge(1)}
             disabled={edges.end}
             aria-label={`Scroll ${row.title} right`}
-            className="grid h-9 w-9 place-items-center rounded-xl glass-soft text-white/60 transition-all hover:text-white disabled:opacity-25"
+            className="grid h-11 w-11 place-items-center rounded-xl glass-soft text-secondary transition-colors duration-[160ms] ease-swift hover:text-primary disabled:text-decorative"
           >
             <ChevronRight size={16} />
           </button>

@@ -135,13 +135,15 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
     <GlassCard tone="deep" className="relative w-full overflow-visible p-6 sm:p-8" glow>
       <span
         aria-hidden
-        className="pointer-events-none absolute -top-28 left-1/2 h-56 w-2/3 -translate-x-1/2 rounded-full bg-royal-500/25 blur-[90px]"
+        // Royal-purple bloom removed: the launch form should be the clearest
+        // object on the page through contrast and elevation, not a colour wash.
+        className="pointer-events-none absolute inset-0"
       />
 
       <div className="relative flex items-center justify-between gap-4">
         <div>
           <h2 className="font-display text-display-sm text-white">Open the room</h2>
-          <p className="mt-1.5 text-sm text-white/45">Takes about four seconds.</p>
+          <p className="mt-1.5 text-sm text-supporting">Takes about four seconds.</p>
         </div>
         <Segmented
           value={mode}
@@ -176,18 +178,18 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
             >
               <div>
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[0.8125rem] font-medium text-white/70">Room code</span>
+                  <span className="text-[0.8125rem] font-medium text-secondary">Room code</span>
                   <button
                     type="button"
                     onClick={() => setCode(makeRoomCode())}
-                    className="inline-flex items-center gap-1.5 text-xs text-white/45 transition-colors hover:text-electric-300"
+                    className="inline-flex min-h-11 items-center gap-1.5 px-2 text-xs text-muted transition-colors duration-[160ms] ease-swift hover:text-primary"
                   >
                     <Shuffle size={12} />
                     Shuffle
                   </button>
                 </div>
                 <CodeInput value={code} onChange={setCode} />
-                <p className="mt-2 text-xs text-white/35">Leave it blank and we will pick one for you.</p>
+                <p className="mt-2 text-xs text-supporting">Leave it blank and we will pick one for you.</p>
               </div>
 
               <div className="rounded-2xl glass-soft p-3.5">
@@ -246,7 +248,7 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
               className="space-y-5"
             >
               <div>
-                <span className="mb-2 block text-[0.8125rem] font-medium text-white/70">Room code</span>
+                <span className="mb-2 block text-[0.8125rem] font-medium text-secondary">Room code</span>
                 <CodeInput value={code} onChange={setCode} autoFocus />
               </div>
 
@@ -282,20 +284,20 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
 
         {recent.length > 0 && (
           <div className="border-t border-white/[0.07] pt-5">
-            <p className="mb-3 text-eyebrow uppercase text-white/35">Recent rooms</p>
+            <p className="mb-3 text-eyebrow uppercase text-muted">Recent rooms</p>
             <div className="flex flex-wrap gap-2">
               {recent.slice(0, 4).map((room) => (
                 <div key={room.code} className="group flex items-center gap-1 rounded-2xl glass-soft p-1 pl-3">
                   <button
                     onClick={() => enter(room.code)}
-                    className="font-mono text-[0.8125rem] font-medium tracking-widest text-white/75 transition-colors hover:text-white"
+                    className="min-h-11 rounded-xl px-2 font-mono text-[0.8125rem] font-medium tracking-widest text-primary transition-colors duration-[160ms] ease-swift hover:bg-white/[0.06]"
                   >
                     {room.code}
                   </button>
                   <button
                     onClick={() => shareLink(room.code)}
                     aria-label={`Copy invite link for room ${room.code}`}
-                    className="grid h-7 w-7 place-items-center rounded-xl text-white/35 transition-colors hover:bg-white/10 hover:text-white"
+                    className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary"
                   >
                     <Copy size={12} />
                   </button>
@@ -306,7 +308,7 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
         )}
 
         <div className="flex items-center gap-2 pt-1">
-          <Badge tone="electric">
+          <Badge tone="neutral">
             <Link2 size={11} />
             Share the link, that is the whole invite
           </Badge>
@@ -314,8 +316,8 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
       </div>
 
       {busy && (
-        <div className="pointer-events-none absolute inset-0 grid place-items-center rounded-3xl bg-ink-900/40 backdrop-blur-[2px]">
-          <Loader2 className="animate-spin text-white/60" size={22} />
+        <div className="pointer-events-none absolute inset-0 grid place-items-center rounded-3xl bg-ink-950/70">
+          <Loader2 className="animate-spin text-gold-400" size={22} />
         </div>
       )}
     </GlassCard>

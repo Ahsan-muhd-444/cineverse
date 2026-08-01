@@ -22,7 +22,7 @@ export const Input = React.forwardRef<HTMLInputElement, FieldProps>(function Inp
   return (
     <div className="w-full">
       {label && (
-        <label htmlFor={inputId} className="mb-2 block text-[0.8125rem] font-medium text-white/70">
+        <label htmlFor={inputId} className="mb-2 block text-[0.8125rem] font-medium text-secondary">
           {label}
         </label>
       )}
@@ -30,20 +30,35 @@ export const Input = React.forwardRef<HTMLInputElement, FieldProps>(function Inp
       <div
         className={cn(
           'group relative flex items-center gap-3 rounded-2xl px-4',
-          'glass-soft transition-all duration-400 ease-glide',
-          'focus-within:border-white/25 focus-within:bg-white/[0.07] focus-within:shadow-glow-royal',
-          error && 'border-rose-400/50 focus-within:shadow-[0_0_0_1px_rgba(251,113,133,0.5)]',
+          // Inset surface, neutral border at rest, stronger neutral on hover.
+          'glass-soft transition-colors duration-[160ms] ease-swift hover:border-white/20',
+          // The WRAPPER must show the field is unavailable, not just the value.
+          // Relational selector, so no prop or handler changes: quieter border,
+          // flatter surface, no hover strengthening and no gold focus.
+          'has-[:disabled]:cursor-not-allowed has-[:disabled]:border-white/[0.06]',
+          'has-[:disabled]:bg-white/[0.015] has-[:disabled]:hover:border-white/[0.06]',
+          'has-[:disabled]:focus-within:border-white/[0.06]',
+          // Focus reads through BORDER and RING contrast, not a coloured bloom.
+          // Was a royal-purple outer glow plus a cyan icon; cyan now means
+          // "live" and nothing else, so form focus is gold.
+          'focus-within:border-gold-400/70',
+          error && 'border-rose-400/55 focus-within:border-rose-400/80',
         )}
       >
-        {icon && <span className="shrink-0 text-white/40 transition-colors group-focus-within:text-electric-400">{icon}</span>}
+        {icon && <span className="shrink-0 text-muted transition-colors group-focus-within:text-gold-400">{icon}</span>}
         <input
           ref={ref}
           id={inputId}
           aria-invalid={Boolean(error) || undefined}
           aria-describedby={describedBy}
           className={cn(
-            'h-12 w-full bg-transparent text-[0.9375rem] text-white outline-none',
-            'placeholder:text-white/30',
+            'h-12 w-full bg-transparent text-[0.9375rem] text-primary outline-none',
+            // Placeholder raised from 0.30 (2.6:1 — unreadable) to the muted
+            // tier at 5.3:1. A placeholder is informational.
+            'placeholder:text-muted',
+            // Disabled must not rely on opacity alone: the value stays legible
+            // and the surface communicates the state instead.
+            'disabled:cursor-not-allowed disabled:text-supporting',
             className,
           )}
           {...props}
@@ -56,7 +71,9 @@ export const Input = React.forwardRef<HTMLInputElement, FieldProps>(function Inp
           {error}
         </p>
       ) : hint ? (
-        <p id={`${inputId}-hint`} className="mt-2 text-xs text-white/40">
+        // Hint text carries instructions, so it takes an informational tier
+        // (was 0.40 — 3.76:1, below AA).
+        <p id={`${inputId}-hint`} className="mt-2 text-xs text-supporting">
           {hint}
         </p>
       ) : null}
@@ -110,15 +127,22 @@ export function CodeInput({
             <div
               key={i}
               className={cn(
-                'relative flex h-14 flex-1 items-center justify-center rounded-2xl font-display text-2xl font-semibold tabular-nums transition-all duration-300 ease-glide sm:h-16 sm:text-3xl',
+                'relative flex h-14 flex-1 items-center justify-center rounded-2xl font-display text-2xl font-semibold tabular-nums sm:h-16 sm:text-3xl',
+                // Only colour and border actually change; `transition-all` also
+                // animated layout properties on every keystroke.
+                'transition-[color,background-color,border-color] duration-[160ms] ease-swift',
                 'glass-soft',
-                char.trim() ? 'text-white' : 'text-white/20',
-                active && 'border-electric-400/60 bg-white/[0.09] shadow-glow-electric',
+                // The empty placeholder dot is decoration; the typed character
+                // is the value and must be fully legible.
+                char.trim() ? 'text-primary' : 'text-decorative',
+                // Selection is a product state, not a realtime one — gold.
+                // Border and surface carry it; the outer cyan bloom is gone.
+                active && 'border-gold-400/70 bg-white/[0.06]',
               )}
             >
               {char.trim() || '·'}
               {active && (
-                <span className="absolute bottom-2 h-0.5 w-5 animate-pulse rounded-full bg-electric-400" />
+                <span className="absolute bottom-2 h-0.5 w-5 animate-pulse rounded-full bg-gold-400" />
               )}
             </div>
           );

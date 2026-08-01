@@ -20,9 +20,14 @@ export const metadata: Metadata = {
     type: 'website',
   },
   twitter: { card: 'summary_large_image', title: 'CineVerse', description: 'A private cinema for two.' },
+  // Newly NAMED asset, not an overwrite of /icon.svg. Favicons are cached hard
+  // and for a long time, so shipping corrected artwork at the old URL would
+  // leave the retired purple/blue mark in tabs that had already seen it. The
+  // old file is deleted rather than rewritten, so there is exactly one
+  // authoritative source and no route can still serve legacy artwork.
   icons: {
-    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
-    apple: '/icon.svg',
+    icon: [{ url: '/cineverse-icon.svg', type: 'image/svg+xml' }],
+    apple: '/cineverse-icon.svg',
   },
 };
 
@@ -56,7 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-dvh bg-ink-900 font-sans">
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-black"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:inline-flex focus:min-h-11 focus:items-center focus:rounded-xl focus:bg-white focus:px-4 focus:text-sm focus:font-semibold focus:text-black"
         >
           Skip to content
         </a>

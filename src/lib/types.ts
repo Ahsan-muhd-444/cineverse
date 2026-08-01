@@ -23,11 +23,14 @@ export interface MediaState {
 }
 
 export interface Member {
+  /** Stable seat id — survives refreshes and brief drops, unlike a socket id. */
   id: string;
   name: string;
   color: string;
   isHost: boolean;
   joinedAt: number;
+  /** False while the member is inside their reconnect grace window. */
+  connected: boolean;
   media: MediaState;
 }
 
@@ -59,10 +62,42 @@ export interface ChatMessage {
   pending?: boolean;
 }
 
+export type LightsMode = 'on' | 'off';
+
 export interface RoomSettings {
   hasPassword: boolean;
   waitingRoom: boolean;
   locked: boolean;
+  /** Shared cinema ambience — 'off' dims the room around the film for everyone. */
+  lightsMode: LightsMode;
+}
+
+/**
+ * A member's shared-upload progress, as broadcast to the room.
+ *
+ * Everything here is safe to show to the other member: no token, no object key,
+ * no upload id, no presigned URL, and no speed or ETA (those are the uploader's
+ * local estimates and would need their own realtime traffic to stay current).
+ * The percentage is computed by the server, not the reporting client.
+ */
+export interface PartnerUploadProgress {
+  memberId: string;
+  memberName: string;
+  label: string;
+  uploadedBytes: number;
+  totalBytes: number;
+  percentage: number;
+  status: 'uploading' | 'paused' | 'retrying' | 'reconnecting' | 'finalizing';
+}
+
+/**
+ * Whether THIS deployment accepts hosted (shared) uploads, decided entirely on the
+ * server. `disabled` is production with no object storage — the picker shows a
+ * clear demo message instead of an upload control that would only fail on submit.
+ */
+export interface UploadAvailability {
+  enabled: boolean;
+  mode: 'disabled' | 'local-dev' | 's3';
 }
 
 export interface RoomSnapshot {
@@ -76,6 +111,10 @@ export interface RoomSnapshot {
   lobby: LobbyEntry[];
   hostId: string | null;
   settings: RoomSettings;
+  /** Active shared uploads, so a member joining mid-upload sees the same state. */
+  uploads?: PartnerUploadProgress[];
+  /** Whether hosted uploads are available on this deployment (server verdict). */
+  uploadAvailability?: UploadAvailability;
   history: ChatMessage[];
 }
 

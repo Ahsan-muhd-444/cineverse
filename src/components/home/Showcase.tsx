@@ -11,44 +11,37 @@ import {
   Video,
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { cn } from '@/lib/utils';
 
 const FEATURES = [
   {
     icon: Gauge,
     title: 'Sync that holds',
     body: 'Every client measures its own clock offset against the server, then corrects drift continuously. Pause on one side and the other is already stopped.',
-    accent: 'from-royal-500/25',
   },
   {
     icon: MessageCircleHeart,
     title: 'Chat that feels alive',
-    body: 'Typing indicators, read receipts, reactions, voice notes, images and files — all glass, all instant, all beside the film instead of on top of it.',
-    accent: 'from-electric-500/25',
+    body: 'Typing indicators, read receipts, reactions, voice notes, images and files — instant, and beside the film instead of on top of it.',
   },
   {
     icon: Video,
     title: 'See and hear each other',
     body: 'Peer-to-peer voice and video with noise suppression, plus screen sharing when you want to show something instead of describe it.',
-    accent: 'from-abyss-500/25',
   },
   {
     icon: MonitorPlay,
     title: 'Play anything',
     body: 'A direct video link, a YouTube video, or the same local file you both already have. Nothing gets uploaded and nothing gets re-encoded.',
-    accent: 'from-royal-500/25',
   },
   {
     icon: Lock,
     title: 'Private by default',
     body: 'Rooms exist only while somebody is in them. Add a passphrase, turn on the waiting room, lock the door, or hand the host seat to someone else.',
-    accent: 'from-electric-500/25',
   },
   {
     icon: Sparkles,
     title: 'Built to be looked at',
     body: 'Glass, depth and motion that respond to you — and step out of the way the moment the lights go down.',
-    accent: 'from-abyss-500/25',
   },
 ];
 
@@ -60,25 +53,21 @@ function FeatureCard({ feature, index }: { feature: (typeof FEATURES)[number]; i
   return (
     <motion.div
       ref={ref}
-      initial={{ opacity: 0, y: 30 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={inView ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.75, ease: [0.16, 1, 0.3, 1], delay: (index % 3) * 0.08 }}
+      transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1], delay: (index % 3) * 0.06 }}
       className="group"
     >
-      <GlassCard interactive glow className="h-full p-7">
-        <span
-          aria-hidden
-          className={cn(
-            'pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-gradient-to-br to-transparent opacity-0 blur-3xl transition-opacity duration-700 group-hover:opacity-100',
-            feature.accent,
-          )}
-        />
+      {/* An informational card, not a control: no `interactive` tilt, no `glow`,
+          no per-card coloured atmosphere, no icon scale on hover. It should read
+          as typeset content that happens to sit on a surface. */}
+      <GlassCard className="h-full p-7 transition-colors duration-[160ms] ease-swift group-hover:border-white/20">
         <div className="relative">
-          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/[0.07] text-white shadow-inner-hairline transition-transform duration-500 ease-glide group-hover:scale-110 group-hover:bg-white/[0.12]">
+          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/[0.07] text-gold-400 shadow-inner-hairline">
             <Icon size={18} strokeWidth={1.9} />
           </div>
-          <h3 className="mt-5 font-display text-lg font-semibold tracking-tight text-white">{feature.title}</h3>
-          <p className="mt-2.5 text-[0.875rem] leading-relaxed text-white/45 pretty">{feature.body}</p>
+          <h3 className="mt-5 font-display text-lg font-semibold tracking-tight text-primary">{feature.title}</h3>
+          <p className="mt-2.5 text-[0.875rem] leading-relaxed text-supporting pretty">{feature.body}</p>
         </div>
       </GlassCard>
     </motion.div>
@@ -95,7 +84,7 @@ export function Showcase() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-            className="text-eyebrow uppercase text-electric-300/70"
+            className="text-eyebrow uppercase text-gold-400"
           >
             Everything in the room
           </motion.p>
@@ -104,7 +93,7 @@ export function Showcase() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.06 }}
-            className="mt-4 font-display text-display-lg text-gradient-soft balance"
+            className="mt-4 font-display text-display-lg text-primary balance"
           >
             Distance is the only thing we could not fix
           </motion.h2>
@@ -113,7 +102,7 @@ export function Showcase() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.12 }}
-            className="mx-auto mt-5 max-w-lg text-[1.0625rem] leading-relaxed text-white/45 pretty"
+            className="mx-auto mt-5 max-w-lg text-[1.0625rem] leading-relaxed text-supporting pretty"
           >
             So we fixed everything else. CineVerse is one room, built for two people who want the
             same film at the same second.
@@ -143,11 +132,11 @@ export function HowItWorks() {
       <div className="container">
         <div className="grid gap-14 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
           <div className="lg:sticky lg:top-32 lg:self-start">
-            <p className="text-eyebrow uppercase text-royal-400/80">How it works</p>
-            <h2 className="mt-4 font-display text-display-lg text-gradient-soft balance">
+            <p className="text-eyebrow uppercase text-gold-400">How it works</p>
+            <h2 className="mt-4 font-display text-display-lg text-primary balance">
               Four steps, then the lights go down
             </h2>
-            <p className="mt-5 max-w-md text-[1.0625rem] leading-relaxed text-white/45 pretty">
+            <p className="mt-5 max-w-md text-[1.0625rem] leading-relaxed text-supporting pretty">
               There is no sign-up, no install, and nothing to configure. The room disappears when you
               both leave.
             </p>
@@ -156,23 +145,23 @@ export function HowItWorks() {
           <ol className="relative space-y-3">
             <span
               aria-hidden
-              className="absolute bottom-6 left-[2.15rem] top-6 w-px bg-gradient-to-b from-royal-500/45 via-electric-500/25 to-transparent"
+              className="absolute bottom-6 left-[2.15rem] top-6 w-px bg-white/[0.09]"
             />
             {STEPS.map((step, i) => (
               <motion.li
                 key={step.n}
-                initial={{ opacity: 0, x: 24 }}
-                whileInView={{ opacity: 1, x: 0 }}
+                initial={{ opacity: 0, y: 8 }}
+                whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: '-60px' }}
-                transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1], delay: i * 0.08 }}
+                transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1], delay: i * 0.06 }}
               >
-                <GlassCard className="group flex items-start gap-5 p-6" interactive tiltStrength={3}>
-                  <span className="relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/[0.07] font-mono text-xs font-medium text-white/60 shadow-inner-hairline transition-colors duration-500 group-hover:bg-white/[0.13] group-hover:text-white">
+                <GlassCard className="group flex items-start gap-5 p-6 transition-colors duration-[160ms] ease-swift group-hover:border-white/20">
+                  <span className="relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/[0.07] font-mono text-xs font-medium text-gold-400 shadow-inner-hairline">
                     {step.n}
                   </span>
                   <div className="min-w-0">
                     <h3 className="font-display text-base font-semibold text-white">{step.title}</h3>
-                    <p className="mt-1.5 text-[0.875rem] leading-relaxed text-white/45 pretty">{step.body}</p>
+                    <p className="mt-1.5 text-[0.875rem] leading-relaxed text-supporting pretty">{step.body}</p>
                   </div>
                 </GlassCard>
               </motion.li>

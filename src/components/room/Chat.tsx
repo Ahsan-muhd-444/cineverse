@@ -13,6 +13,7 @@ import {
   Play,
   Send,
   Smile,
+  SmilePlus,
   Square,
   Trash2,
   X,
@@ -20,6 +21,7 @@ import {
 import type { ChatMessage } from '@/lib/types';
 import { Avatar, EmptyState } from '@/components/ui/Bits';
 import { cn, fileToDataUrl, formatBytes, formatTime } from '@/lib/utils';
+import { describeReaction, isDismissKey } from '@/lib/a11y';
 
 /* ==========================================================================
    Emoji + GIF pickers
@@ -54,6 +56,36 @@ function EmojiPicker({
   onPick: (emoji: string) => void;
 }) {
   const [tab, setTab] = React.useState<'emoji' | 'gif'>('emoji');
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  // The caller passes an inline `onClose`, so its identity changes every render.
+  // Depending on it directly made this effect tear down and re-register
+  // continuously: the Escape listener was missing for part of every frame, and
+  // the cleanup kept yanking focus back to the opener. Holding it in a ref keeps
+  // the effect keyed on `open` alone, which is the only thing that matters.
+  const onCloseRef = React.useRef(onClose);
+  React.useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Escape closes the picker and hands focus back to whatever opened it —
+  // otherwise a keyboard user closes the popover and lands nowhere.
+  React.useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isDismissKey(e)) return;
+      // Local overlay only: never let this bubble up and leave the room.
+      e.stopPropagation();
+      onCloseRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    const raf = requestAnimationFrame(() => panelRef.current?.querySelector('button')?.focus());
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      cancelAnimationFrame(raf);
+      if (document.body.contains(opener)) opener?.focus?.();
+    };
+  }, [open]);
 
   return (
     <AnimatePresence>
@@ -61,6 +93,9 @@ function EmojiPicker({
         <>
           <div className="fixed inset-0 z-30" onClick={onClose} />
           <motion.div
+            ref={panelRef}
+            role="dialog"
+            aria-label="Emoji and GIF picker"
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
@@ -74,7 +109,7 @@ function EmojiPicker({
                   onClick={() => setTab(t)}
                   className={cn(
                     'flex-1 rounded-xl px-3 py-1.5 text-xs font-medium capitalize transition-colors',
-                    tab === t ? 'bg-white/12 text-white' : 'text-white/45 hover:text-white',
+                    tab === t ? 'bg-white/[0.10] text-primary after:absolute after:inset-x-3 after:bottom-1 after:h-0.5 after:rounded-full after:bg-gold-400' : 'text-secondary hover:text-primary',
                   )}
                 >
                   {t === 'gif' ? 'GIFs' : 'Emoji'}
@@ -86,13 +121,13 @@ function EmojiPicker({
               {tab === 'emoji' ? (
                 EMOJI_GROUPS.map((group) => (
                   <div key={group.label} className="mb-3 last:mb-0">
-                    <p className="mb-2 text-eyebrow uppercase text-white/30">{group.label}</p>
+                    <p className="mb-2 text-eyebrow uppercase text-muted">{group.label}</p>
                     <div className="grid grid-cols-6 gap-1">
                       {group.emojis.map((emoji) => (
                         <button
                           key={emoji}
                           onClick={() => onPick(emoji)}
-                          className="grid h-9 place-items-center rounded-xl text-xl transition-all duration-200 hover:scale-125 hover:bg-white/10"
+                          className="grid h-11 place-items-center rounded-xl text-xl transition-[transform,background-color] duration-[160ms] ease-swift hover:scale-[1.06] hover:bg-white/10"
                         >
                           {emoji}
                         </button>
@@ -108,13 +143,17 @@ function EmojiPicker({
                       onClick={() => onPick(`${gif.emoji}${gif.emoji}${gif.emoji}`)}
                       className="group relative aspect-[4/3] overflow-hidden rounded-2xl border border-white/10"
                       style={{
-                        background: `linear-gradient(150deg, hsl(${gif.hue} 80% 55% / 0.5), hsl(${gif.hue + 40} 80% 40% / 0.25))`,
+                        // Was 80% saturation at 55% lightness — six neon tiles
+                        // shouting next to a film. Now a muted tonal field over
+                        // a warm-dark base: the hue still distinguishes cards,
+                        // it just stops competing with the screen.
+                        background: `linear-gradient(150deg, hsl(${gif.hue} 26% 26% / 0.9), hsl(${gif.hue + 30} 20% 15% / 0.95))`,
                       }}
                     >
-                      <span className="absolute inset-0 grid place-items-center text-3xl transition-transform duration-500 group-hover:scale-125">
+                      <span className="absolute inset-0 grid place-items-center text-3xl transition-transform duration-[200ms] ease-swift group-hover:scale-[1.04]">
                         {gif.emoji}
                       </span>
-                      <span className="absolute inset-x-0 bottom-0 bg-black/45 py-1 text-[0.625rem] text-white/80 backdrop-blur-sm">
+                      <span className="absolute inset-x-0 bottom-0 bg-black/60 py-1 text-[0.6875rem] text-white backdrop-blur-sm">
                         {gif.label}
                       </span>
                     </button>
@@ -162,7 +201,7 @@ function VoiceNote({ src, duration }: { src: string; duration: number }) {
       <button
         onClick={() => (playing ? audioRef.current?.pause() : audioRef.current?.play())}
         aria-label={playing ? 'Pause voice note' : 'Play voice note'}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
       >
         {playing ? <Square size={12} fill="currentColor" /> : <Play size={13} fill="currentColor" className="ml-0.5" />}
       </button>
@@ -184,7 +223,7 @@ function VoiceNote({ src, duration }: { src: string; duration: number }) {
         })}
       </div>
 
-      <span className="shrink-0 font-mono text-[0.6875rem] text-white/50">{formatTime(duration)}</span>
+      <span className="shrink-0 font-mono text-[0.6875rem] text-muted">{formatTime(duration)}</span>
     </div>
   );
 }
@@ -250,7 +289,7 @@ function useRecorder() {
    Message bubble
    ========================================================================== */
 
-const QUICK_REACTIONS = ['❤️', '😂', '😮', '🔥', '👏'];
+const QUICK_REACTIONS = ['❤️', '😂', '🔥', '😮', '🍿', '👏'];
 
 /** True when a message is only emoji (and short) — those get rendered large. */
 function isEmojiOnly(text?: string): boolean {
@@ -275,16 +314,63 @@ function Bubble({
   lastSeen: number;
   showReceipt: boolean;
 }) {
-  const [showActions, setShowActions] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  // Whether the picker opens above the trigger (default) or below — flipped when
+  // the message sits near the top of the list, where "above" would be clipped
+  // by the scroll container.
+  const [dropUp, setDropUp] = React.useState(true);
+  const reactRef = React.useRef<HTMLDivElement>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+
+  const togglePicker = React.useCallback(() => {
+    const el = reactRef.current;
+    if (el) {
+      const list = el.closest('[role="log"]');
+      const listTop = list ? list.getBoundingClientRect().top : 0;
+      setDropUp(el.getBoundingClientRect().top - listTop > 56);
+    }
+    setPickerOpen((v) => !v);
+  }, []);
+
+  // Close the anchored reaction picker on an outside click or Escape, and give
+  // focus back to the trigger so a keyboard user is not dropped at the top of
+  // the document.
+  React.useEffect(() => {
+    if (!pickerOpen) return;
+    const trigger = triggerRef.current;
+    const onDown = (e: MouseEvent) => {
+      if (reactRef.current && !reactRef.current.contains(e.target as Node)) setPickerOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (!isDismissKey(e)) return;
+      e.stopPropagation();
+      setPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+      if (document.body.contains(trigger)) trigger?.focus?.();
+    };
+  }, [pickerOpen]);
+
+  const isLongMessage = Boolean(message.text && message.text.length > 120);
 
   if (message.kind === 'system') {
     return (
       <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="my-3 flex justify-center"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        className="my-3 flex items-center gap-3 px-2"
       >
-        <span className="rounded-full bg-white/[0.06] px-3 py-1 text-[0.6875rem] text-white/40">{message.text}</span>
+        {/* Editorial timeline annotation: hairline rules either side of quiet
+            centred text, rather than a filled pill that read as a disabled
+            control. */}
+        <span aria-hidden className="h-px flex-1 bg-white/[0.07]" />
+        <span className="shrink-0 text-center text-[0.6875rem] text-supporting">{message.text}</span>
+        <span aria-hidden className="h-px flex-1 bg-white/[0.07]" />
       </motion.div>
     );
   }
@@ -294,20 +380,25 @@ function Bubble({
   return (
     <motion.div
       layout="position"
-      initial={{ opacity: 0, y: 12, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-      className={cn('group/msg flex gap-2.5', mine ? 'flex-row-reverse' : 'flex-row', grouped ? 'mt-1' : 'mt-4')}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
+      // Opacity plus a short rise. The spring's scale made every arriving
+      // message pop, which is a lot of movement beside a film.
+      initial={{ opacity: 0, y: 7 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className={cn('group/msg flex min-w-0 items-end gap-2', mine ? 'flex-row-reverse' : 'flex-row', grouped ? 'mt-1' : 'mt-4')}
     >
-      <div className="w-8 shrink-0">
+      <div className="w-8 shrink-0 self-start">
         {!grouped && !mine && <Avatar name={message.author || '?'} color={message.color} size={32} />}
       </div>
 
-      <div className={cn('min-w-0 max-w-[82%]', mine ? 'items-end' : 'items-start', 'flex flex-col')}>
+      <div
+        className={cn(
+          'flex min-w-0 max-w-[82%] flex-col lg:max-w-[min(78%,18rem)]',
+          mine ? 'items-end' : 'items-start',
+        )}
+      >
         {!grouped && (
-          <span className={cn('mb-1 px-1 text-[0.6875rem] text-white/35', mine && 'text-right')}>
+          <span className={cn('mb-1 px-1 text-[0.6875rem] text-muted', mine && 'text-right')}>
             {mine ? 'You' : message.author} ·{' '}
             {new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
@@ -315,18 +406,24 @@ function Bubble({
 
         <div
           className={cn(
-            'relative overflow-hidden rounded-2xl border px-3.5 py-2.5 text-[0.875rem] leading-relaxed backdrop-blur-xl',
+            // No backdrop blur and no persistent shadow: every bubble reading
+            // as its own glass card is what made the rail feel busy. Outgoing is
+            // identified by a slightly lifted neutral surface and a warm hairline
+            // — not by being the brightest thing on screen.
+            'relative min-w-0 max-w-full overflow-hidden rounded-[1.15rem] border px-3 py-2 text-[0.875rem] leading-relaxed',
             mine
-              ? 'border-royal-400/25 bg-[linear-gradient(135deg,rgba(124,58,237,0.35),rgba(59,108,246,0.22))] text-white'
-              : 'border-white/10 bg-white/[0.07] text-white/90',
+              ? 'border-gold-400/25 bg-white/[0.085] text-primary'
+              : 'border-white/[0.07] bg-white/[0.035] text-primary',
             grouped && (mine ? 'rounded-tr-md' : 'rounded-tl-md'),
+            // Wall-of-text messages read calmer a touch smaller and tighter.
+            isLongMessage && 'px-2.5 text-[0.8125rem]',
             message.kind === 'image' || message.kind === 'gif' ? 'p-1.5' : '',
           )}
         >
           {message.kind === 'text' && (
             <p
               className={cn(
-                'whitespace-pre-wrap break-words',
+                'min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word]',
                 // A message that is nothing but emoji reads better oversized.
                 isEmojiOnly(message.text) && 'py-1 text-3xl leading-tight',
               )}
@@ -360,12 +457,12 @@ function Bubble({
               download={message.fileName}
               className="flex items-center gap-3 pr-1 transition-opacity hover:opacity-80"
             >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/12">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/12">
                 <FileText size={16} />
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-[0.8125rem] font-medium">{message.fileName}</span>
-                <span className="block text-[0.6875rem] text-white/45">{formatBytes(message.size || 0)}</span>
+                <span className="block text-[0.6875rem] text-muted">{formatBytes(message.size || 0)}</span>
               </span>
               <Download size={14} className="ml-1 shrink-0 opacity-60" />
             </a>
@@ -379,45 +476,74 @@ function Bubble({
               <button
                 key={emoji}
                 onClick={() => onReact(emoji)}
+                aria-label={describeReaction(emoji, users.length)}
                 className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.07] px-2 py-0.5 text-[0.6875rem] transition-colors hover:bg-white/15"
               >
-                <span>{emoji}</span>
-                <span className="text-white/50">{users.length}</span>
+                <span aria-hidden>{emoji}</span>
+                <span aria-hidden className="text-secondary">{users.length}</span>
               </button>
             ))}
           </div>
         )}
 
         {mine && showReceipt && (
-          <span className="mt-1 flex items-center gap-1 px-1 text-[0.625rem] text-white/30">
-            {seen ? <CheckCheck size={11} className="text-electric-400" /> : <Check size={11} />}
+          <span className="mt-1 flex items-center gap-1 px-1 text-[0.6875rem] text-muted">
+            {/* Cyan stays on the READ indicator only — a read receipt is a
+                realtime state. "Sent" remains neutral, and no bubble, glow or
+                background carries the colour. */}
+            {seen ? <CheckCheck size={12} className="text-electric-400" /> : <Check size={12} />}
             {seen ? 'Seen' : 'Sent'}
           </span>
         )}
       </div>
 
-      {/* hover reactions */}
-      <AnimatePresence>
-        {showActions && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="flex items-center self-center rounded-full glass-deep p-0.5"
+      {/* react: a subtle trigger (hover/focus only); the emoji bar opens on click,
+          absolutely positioned so it never shifts the message row. */}
+      <div ref={reactRef} className="relative self-center">
+        <button
+          ref={triggerRef}
+          onClick={togglePicker}
+          aria-label="React to message"
+          aria-haspopup="menu"
+          aria-expanded={pickerOpen}
+          className={cn(
+            'grid h-11 w-11 place-items-center rounded-full text-muted outline-none transition-opacity duration-200 hover:bg-white/10 hover:text-primary focus-visible:opacity-100',
+            pickerOpen ? 'bg-white/10 text-white opacity-100' : 'opacity-0 group-hover/msg:opacity-100',
+          )}
+        >
+          <SmilePlus size={14} />
+        </button>
+
+        {pickerOpen && (
+          <div
+            role="menu"
+            className={cn(
+              'absolute z-50 flex items-center gap-0.5 rounded-full glass-deep p-1 shadow-lg',
+              dropUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5',
+              // Grow INWARD over the bubble, away from the panel edge: my
+              // messages have the trigger on the left (row-reversed), so the
+              // picker anchors left and grows right; others anchor right and
+              // grow left. The old inverse anchoring clipped at the panel edge.
+              mine ? 'left-0' : 'right-0',
+            )}
           >
             {QUICK_REACTIONS.map((emoji) => (
               <button
                 key={emoji}
-                onClick={() => onReact(emoji)}
+                role="menuitem"
+                onClick={() => {
+                  onReact(emoji);
+                  setPickerOpen(false);
+                }}
                 aria-label={`React with ${emoji}`}
-                className="grid h-6 w-6 place-items-center rounded-full text-xs transition-transform hover:scale-125"
+                className="grid h-11 w-11 place-items-center rounded-full text-base transition-transform duration-[160ms] ease-swift hover:scale-[1.06]"
               >
                 {emoji}
               </button>
             ))}
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
     </motion.div>
   );
 }
@@ -439,18 +565,51 @@ export function Chat({
   myId: string;
   typing: string[];
   seenAt: Record<string, number>;
-  onSend: (payload: Partial<ChatMessage> & { kind: ChatMessage['kind'] }) => void;
+  onSend: (
+    payload: Partial<ChatMessage> & { kind: ChatMessage['kind'] },
+  ) => void | Promise<{ ok: true; id?: string } | { ok: false; error: string; retryAfterMs?: number }>;
   onTyping: (isTyping: boolean) => void;
   onReact: (messageId: string, emoji: string) => void;
 }) {
   const [draft, setDraft] = React.useState('');
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
+  const [sendError, setSendError] = React.useState<string | null>(null);
+
+  /** Send, and surface a server rejection instead of dropping it silently. */
+  const trySend = React.useCallback(
+    async (payload: Partial<ChatMessage> & { kind: ChatMessage['kind'] }) => {
+      setSendError(null);
+      const result = await onSend(payload);
+      if (!result || result.ok) return true;
+      setSendError(
+        result.error === 'RATE_LIMITED'
+          ? 'You’re sending too quickly. Try again in a moment.'
+          : result.error === 'TOO_LARGE'
+            ? 'That attachment is too large.'
+            : result.error === 'BAD_DATA'
+              ? 'That file could not be read.'
+              : 'Message could not be sent.',
+      );
+      return false;
+    },
+    [onSend],
+  );
+
+  // Clear a stale error once anything succeeds or the room moves on.
+  React.useEffect(() => {
+    if (!sendError) return;
+    const id = setTimeout(() => setSendError(null), 6000);
+    return () => clearTimeout(id);
+  }, [sendError]);
   const [atBottom, setAtBottom] = React.useState(true);
 
   const listRef = React.useRef<HTMLDivElement>(null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const typingTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Whether a typing session is currently open, so only ONE `typing:true` is
+  // sent per burst instead of one per keystroke.
+  const typingActiveRef = React.useRef(false);
   const imageInput = React.useRef<HTMLInputElement>(null);
   const fileInput = React.useRef<HTMLInputElement>(null);
   const recorder = useRecorder();
@@ -471,20 +630,49 @@ export function Chat({
     setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 90);
   };
 
-  const submit = () => {
+  /** End the current typing session, if one is open. */
+  const stopTyping = React.useCallback(() => {
+    if (typingTimer.current) {
+      clearTimeout(typingTimer.current);
+      typingTimer.current = null;
+    }
+    if (!typingActiveRef.current) return;
+    typingActiveRef.current = false;
+    onTyping(false);
+  }, [onTyping]);
+
+  const submit = async () => {
     const text = draft.trim();
     if (!text) return;
-    onSend({ kind: 'text', text });
+    // Clear optimistically so typing feels instant, but restore the draft if the
+    // server refused — a rejected message must never just vanish.
     setDraft('');
-    onTyping(false);
+    stopTyping();
+    const ok = await trySend({ kind: 'text', text });
+    if (!ok) setDraft((current) => current || text);
   };
 
+  /**
+   * Typing is a SESSION, not a per-keystroke event. Emitting `typing:true` on
+   * every character let a fast typist drain the server's background budget —
+   * which, before the buckets were split, could suppress playback heartbeats.
+   * One `true` opens the session; the idle timer closes it with one `false`.
+   */
   const handleDraft = (value: string) => {
     setDraft(value);
-    onTyping(true);
+    if (!typingActiveRef.current) {
+      typingActiveRef.current = true;
+      onTyping(true);
+    }
     if (typingTimer.current) clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(() => onTyping(false), 1400);
+    typingTimer.current = setTimeout(() => {
+      typingActiveRef.current = false;
+      onTyping(false);
+    }, 1400);
   };
+
+  // Never leave a typing indicator stuck on for others after unmount.
+  React.useEffect(() => stopTyping, [stopTyping]);
 
   const attach = async (file: File, kind: 'image' | 'file') => {
     if (file.size > 8 * 1024 * 1024) {
@@ -494,7 +682,7 @@ export function Chat({
     setUploading(true);
     try {
       const data = await fileToDataUrl(file);
-      onSend({
+      await trySend({
         kind: file.type.startsWith('image/') ? 'image' : kind,
         data,
         fileName: file.name,
@@ -513,7 +701,7 @@ export function Chat({
       setUploading(true);
       try {
         const data = await fileToDataUrl(new File([result.blob], 'voice-note.webm', { type: result.blob.type }));
-        onSend({
+        await trySend({
           kind: 'voice',
           data,
           duration: result.duration,
@@ -531,12 +719,12 @@ export function Chat({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* ---------- messages ---------- */}
+    <div className="flex h-full min-h-0 min-w-0 flex-col lg:overflow-hidden">
+      {/* ---------- messages (the ONLY scrolling region) ---------- */}
       <div
         ref={listRef}
         onScroll={onScroll}
-        className="relative min-h-0 flex-1 overflow-y-auto px-3 py-2"
+        className="chat-scrollbar relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2"
         role="log"
         aria-live="polite"
         aria-label="Room chat"
@@ -587,7 +775,7 @@ export function Chat({
                   />
                 ))}
               </span>
-              <span className="text-[0.6875rem] text-white/35">
+              <span className="text-[0.6875rem] text-supporting">
                 {typing.length === 1 ? `${typing[0]} is typing` : 'several people are typing'}
               </span>
             </motion.div>
@@ -605,7 +793,7 @@ export function Chat({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
-            className="mx-auto -mt-10 mb-2 rounded-full glass-deep px-3 py-1.5 text-[0.6875rem] text-white/70"
+            className="mx-auto -mt-10 mb-2 rounded-full elev-float px-3 py-1.5 text-[0.6875rem] text-secondary"
           >
             Jump to latest
           </motion.button>
@@ -613,7 +801,14 @@ export function Chat({
       </AnimatePresence>
 
       {/* ---------- composer ---------- */}
-      <div className="relative border-t border-white/[0.07] p-3">
+      <div className="relative min-w-0 shrink-0 border-t border-white/[0.07] p-3">
+        {/* Server refused this message (rate limit / oversized attachment).
+            Only shown for real sends — never for typing, receipts or reactions. */}
+        {sendError && (
+          <p role="status" className="mb-2 px-1 text-[0.6875rem] leading-relaxed text-amber-300">
+            {sendError}
+          </p>
+        )}
         {recorder.recording ? (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3">
             <span className="relative flex h-2.5 w-2.5">
@@ -621,26 +816,29 @@ export function Chat({
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-400" />
             </span>
             <span className="font-mono text-sm text-rose-100">{formatTime(recorder.elapsed)}</span>
-            <span className="text-[0.6875rem] text-white/45">Recording…</span>
+            <span className="text-[0.6875rem] text-supporting">Recording…</span>
             <div className="ml-auto flex gap-1.5">
               <button
                 onClick={recorder.cancel}
                 aria-label="Discard recording"
-                className="grid h-9 w-9 place-items-center rounded-xl text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                className="grid h-11 w-11 place-items-center rounded-xl text-white/60 transition-colors hover:bg-white/10 hover:text-white"
               >
                 <Trash2 size={15} />
               </button>
               <button
                 onClick={toggleRecording}
                 aria-label="Send voice note"
-                className="grid h-9 w-9 place-items-center rounded-xl bg-white text-black transition-transform hover:scale-105"
+                className="grid h-11 w-11 place-items-center rounded-xl bg-white text-black transition-transform hover:scale-105"
               >
                 <Send size={15} />
               </button>
             </div>
           </div>
         ) : (
-          <div className="relative flex items-end gap-1.5 rounded-2xl glass-soft p-1.5 transition-all duration-400 focus-within:border-white/25 focus-within:shadow-glow-royal">
+          // The OUTER wrapper owns popover positioning (no clipping); the inner
+          // shell owns rounding + overflow containment. Keeping the picker
+          // inside an overflow-hidden box would clip its bottom-full dropdown.
+          <div className="relative min-w-0">
             <EmojiPicker
               open={pickerOpen}
               onClose={() => setPickerOpen(false)}
@@ -655,11 +853,12 @@ export function Chat({
               }}
             />
 
+            <div className="flex min-w-0 items-end gap-1.5 overflow-hidden rounded-2xl glass-soft p-1.5 transition-colors duration-300 focus-within:border-white/20">
             <button
               onClick={() => setPickerOpen((v) => !v)}
               aria-label="Emoji and GIFs"
               aria-expanded={pickerOpen}
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary"
             >
               {pickerOpen ? <X size={16} /> : <Smile size={17} />}
             </button>
@@ -676,7 +875,7 @@ export function Chat({
               rows={1}
               placeholder="Message…"
               aria-label="Write a message"
-              className="max-h-28 min-h-[2.25rem] flex-1 resize-none bg-transparent py-2 text-[0.875rem] text-white outline-none placeholder:text-white/30"
+              className="max-h-28 min-h-11 min-w-0 flex-1 resize-none overflow-y-auto break-words bg-transparent py-3 text-[0.875rem] text-primary outline-none [overflow-wrap:anywhere] placeholder:text-muted"
             />
 
             <div className="flex shrink-0 items-center gap-0.5">
@@ -697,21 +896,21 @@ export function Chat({
               <button
                 onClick={() => imageInput.current?.click()}
                 aria-label="Send an image"
-                className="grid h-9 w-9 place-items-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+                className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary"
               >
                 <ImagePlus size={16} />
               </button>
               <button
                 onClick={() => fileInput.current?.click()}
                 aria-label="Attach a file"
-                className="hidden h-9 w-9 place-items-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-white sm:grid"
+                className="hidden h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary sm:grid"
               >
                 <Paperclip size={16} />
               </button>
               <button
                 onClick={toggleRecording}
                 aria-label="Record a voice note"
-                className="grid h-9 w-9 place-items-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+                className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary"
               >
                 <Mic size={16} />
               </button>
@@ -722,14 +921,15 @@ export function Chat({
                 disabled={!draft.trim() || uploading}
                 aria-label="Send message"
                 className={cn(
-                  'grid h-9 w-9 place-items-center rounded-xl transition-all duration-300',
+                  'grid h-11 w-11 place-items-center rounded-xl transition-all duration-300',
                   draft.trim()
-                    ? 'bg-[linear-gradient(120deg,#7c3aed,#22d3ee)] text-white shadow-[0_8px_24px_-8px_rgba(124,58,237,0.9)]'
-                    : 'text-white/25',
+                    ? 'bg-gold-500 text-ink-950 hover:bg-gold-400 active:bg-gold-600'
+                    : 'text-muted',
                 )}
               >
                 <Send size={15} />
               </motion.button>
+            </div>
             </div>
           </div>
         )}

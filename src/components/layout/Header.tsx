@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import { motion, useMotionValueEvent, useScroll } from 'framer-motion';
 import { Clapperboard, Menu, Sparkles, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/Button';
+import { buttonClasses } from '@/components/ui/Button';
 
 const LINKS = [
   { href: '/', label: 'Home' },
@@ -19,15 +19,23 @@ export function Wordmark({ className, compact }: { className?: string; compact?:
     <Link
       href="/"
       aria-label="CineVerse home"
-      className={cn('group inline-flex items-center gap-2.5', className)}
+      // The visible tile stays 36px; the LINK carries the 44px minimum so the
+      // brand mark meets the same target standard as every other control.
+      // `min-w-11` matters in the compact (room) variant, where the link holds
+      // only the 36px tile; the full wordmark is already wider.
+      className={cn('group inline-flex min-h-11 min-w-11 items-center justify-center gap-2.5', className)}
     >
-      <span className="relative grid h-9 w-9 place-items-center overflow-hidden rounded-xl bg-[linear-gradient(135deg,#7c3aed,#3b6cf6_55%,#22d3ee)] shadow-[0_8px_26px_-8px_rgba(124,58,237,0.9)]">
-        <Clapperboard size={17} className="relative z-10 text-white" strokeWidth={2.2} />
-        <span className="absolute inset-0 -translate-x-full bg-white/30 blur-sm transition-transform duration-700 group-hover:translate-x-full" />
+      {/* Was a purple -> blue -> cyan gradient tile with a purple halo and a
+          light-sweep on hover. Now a gold symbol on a near-black tile: the mark
+          reads as one brand rather than three colours, and the gold appears as
+          a detail rather than a fill. Dimensions, icon, link target and
+          accessible name are unchanged. */}
+      <span className="relative grid h-9 w-9 place-items-center overflow-hidden rounded-xl border border-gold-400/25 bg-ink-850 transition-colors duration-200 group-hover:border-gold-400/50">
+        <Clapperboard size={17} className="relative z-10 text-gold-400" strokeWidth={2.2} />
       </span>
       {!compact && (
-        <span className="font-display text-[1.0625rem] font-semibold tracking-tight text-white">
-          Cine<span className="text-white/55 transition-colors duration-500 group-hover:text-electric-300">Verse</span>
+        <span className="font-display text-[1.0625rem] font-semibold tracking-tight text-primary">
+          Cine<span className="text-secondary transition-colors duration-200 group-hover:text-primary">Verse</span>
         </span>
       )}
     </Link>
@@ -66,7 +74,7 @@ export function Header() {
                   href={link.href}
                   className={cn(
                     'relative rounded-xl px-4 py-2 text-[0.8125rem] font-medium transition-colors duration-300',
-                    active ? 'text-white' : 'text-white/50 hover:text-white/85',
+                    active ? 'text-primary' : 'text-secondary hover:text-primary',
                   )}
                 >
                   {active && (
@@ -83,18 +91,19 @@ export function Header() {
           </nav>
 
           <div className="flex items-center gap-2">
-            <Link href="/#launchpad" className="hidden sm:inline-flex">
-              <Button variant="primary" size="sm">
-                <Sparkles size={14} />
-                Create room
-              </Button>
+            <Link
+              href="/#launchpad"
+              className={buttonClasses({ variant: 'primary', size: 'sm', className: 'hidden !h-11 sm:inline-flex' })}
+            >
+              <Sparkles size={14} />
+              Create room
             </Link>
 
             <button
               onClick={() => setMenuOpen((v) => !v)}
               aria-label={menuOpen ? 'Close menu' : 'Open menu'}
               aria-expanded={menuOpen}
-              className="grid h-10 w-10 place-items-center rounded-xl glass-soft text-white/70 transition-colors hover:text-white md:hidden"
+              className="grid h-11 w-11 place-items-center rounded-xl glass-soft text-secondary transition-colors duration-[160ms] ease-swift hover:text-primary md:hidden"
             >
               {menuOpen ? <X size={17} /> : <Menu size={17} />}
             </button>
@@ -114,7 +123,7 @@ export function Header() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="rounded-2xl px-4 py-3 text-sm font-medium text-white/75 transition-colors hover:bg-white/[0.07] hover:text-white"
+                className="rounded-2xl px-4 py-3 text-sm font-medium text-secondary transition-colors hover:bg-white/[0.07] hover:text-primary"
               >
                 {link.label}
               </Link>

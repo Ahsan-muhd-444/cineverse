@@ -9,7 +9,10 @@ services:
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
+      # Must satisfy package.json `engines` (>=22.18.0) and match .nvmrc, which CI
+      # also reads. An older runtime trips EBADENGINE on `npm ci` and cannot run
+      # the suites that import .ts directly via native type stripping.
       - key: NODE_VERSION
-        value: 20.11.1
+        value: 22.18.0
       - key: NODE_ENV
         value: production
