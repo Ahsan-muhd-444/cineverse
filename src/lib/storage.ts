@@ -2,6 +2,9 @@
 
 import type { Profile, WatchProgress } from './types';
 import { colorFrom } from './utils';
+import { pruneRecentRooms, withRoomForgotten, withRoomRemembered } from './recentRooms';
+
+export { RECENT_ROOM_TTL_MS } from './recentRooms';
 
 /**
  * A very small, typed wrapper over localStorage.
@@ -97,13 +100,34 @@ export interface RecentRoom {
   at: number;
 }
 
-export function getRecentRooms(): RecentRoom[] {
-  return read<RecentRoom[]>(KEYS.recentRooms, []);
+/**
+ * Recent rooms held by THIS browser only — never sent to, or read from, the
+ * server. The retention rules live in `recentRooms.ts` so they can be tested
+ * without a DOM; this layer only reads and writes localStorage.
+ */
+export function getRecentRooms(now: number = Date.now()): RecentRoom[] {
+  const all = read<RecentRoom[]>(KEYS.recentRooms, []);
+  const fresh = pruneRecentRooms(all, now) as RecentRoom[];
+  // Persist the pruned list, so an expired code cannot reappear on a refresh.
+  if (fresh.length !== all.length) write(KEYS.recentRooms, fresh);
+  return fresh;
 }
 
 export function rememberRoom(code: string, label?: string): void {
-  const all = getRecentRooms().filter((r) => r.code !== code);
-  write(KEYS.recentRooms, [{ code, label, at: Date.now() }, ...all].slice(0, 8));
+  const now = Date.now();
+  write(KEYS.recentRooms, withRoomRemembered(read<RecentRoom[]>(KEYS.recentRooms, []), code, label, now));
+}
+
+/** Forget one room — for a shared or borrowed device. */
+export function forgetRoom(code: string, now: number = Date.now()): RecentRoom[] {
+  const left = withRoomForgotten(read<RecentRoom[]>(KEYS.recentRooms, []), code, now) as RecentRoom[];
+  write(KEYS.recentRooms, left);
+  return left;
+}
+
+/** Forget all of them. */
+export function clearRecentRooms(): void {
+  write(KEYS.recentRooms, []);
 }
 
 /* ---------------- app settings ---------------- */

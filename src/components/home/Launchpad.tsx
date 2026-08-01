@@ -3,12 +3,20 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowRight, Copy, KeyRound, Link2, Loader2, LogIn, Shuffle, Sparkles, UserRound } from 'lucide-react';
+import { ArrowRight, Copy, KeyRound, Link2, Loader2, LogIn, Shuffle, Sparkles, UserRound, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { CodeInput, Input } from '@/components/ui/Input';
 import { Badge, Segmented, Switch, useToast } from '@/components/ui/Bits';
-import { getProfile, getRecentRooms, rememberRoom, setProfile, type RecentRoom } from '@/lib/storage';
+import {
+  clearRecentRooms,
+  forgetRoom,
+  getProfile,
+  getRecentRooms,
+  rememberRoom,
+  setProfile,
+  type RecentRoom,
+} from '@/lib/storage';
 import { getSocket } from '@/lib/socket';
 import { colorFrom, copyToClipboard, makeRoomCode, normalizeRoomCode } from '@/lib/utils';
 
@@ -284,7 +292,23 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
 
         {recent.length > 0 && (
           <div className="border-t border-white/[0.07] pt-5">
-            <p className="mb-3 text-eyebrow uppercase text-muted">Recent rooms</p>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-eyebrow uppercase text-muted">Recent rooms</p>
+              {/* On a shared or borrowed device these codes are the one thing
+                  worth being able to wipe, so the control is always in reach. */}
+              <button
+                onClick={() => {
+                  clearRecentRooms();
+                  setRecent([]);
+                }}
+                className="min-h-11 rounded-lg px-2 text-[0.75rem] text-muted transition-colors duration-[160ms] ease-swift hover:text-primary"
+              >
+                Clear
+              </button>
+            </div>
+            <p className="mb-3 text-[0.75rem] leading-relaxed text-supporting">
+              Saved on this device only — never shared with anyone. They disappear on their own after 12 hours.
+            </p>
             <div className="flex flex-wrap gap-2">
               {recent.slice(0, 4).map((room) => (
                 <div key={room.code} className="group flex items-center gap-1 rounded-2xl glass-soft p-1 pl-3">
@@ -300,6 +324,13 @@ export function Launchpad({ initialMode = 'create' }: { initialMode?: Mode }) {
                     className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-primary"
                   >
                     <Copy size={12} />
+                  </button>
+                  <button
+                    onClick={() => setRecent(forgetRoom(room.code))}
+                    aria-label={`Forget room ${room.code} on this device`}
+                    className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors duration-[160ms] ease-swift hover:bg-white/10 hover:text-rose-300"
+                  >
+                    <X size={12} />
                   </button>
                 </div>
               ))}
