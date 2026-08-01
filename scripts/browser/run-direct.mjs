@@ -1268,6 +1268,180 @@ function demoScenarios({ browser }) {
     }
   });
 
+  /*
+   * THE ROOM IS AN APP SCREEN ON A PHONE, NOT A DOCUMENT.
+   *
+   * The regression this locks down: the room root kept its natural `min-h-dvh`
+   * column on mobile, so every new chat message made the PAGE taller. The
+   * composer slid off the bottom of the screen and the whole room stretched.
+   * Everything here is measured in a real 390x844 Chromium viewport.
+   */
+  scenario('mobile room stays a fixed screen: only the message list scrolls', async () => {
+    const demo = await startDemoModeApp((m) => console.log(`[direct] ${m}`));
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
+    });
+    const page = await ctx.newPage();
+    const code = `MOB${Math.floor(Math.random() * 900 + 100)}`;
+
+    try {
+      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      const nameField = page.getByPlaceholder('Your name');
+      await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+      await nameField.fill('Phone');
+      await page.getByRole('button', { name: 'Take my seat' }).click();
+      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().waitFor({ timeout: 90_000 });
+
+      // Put a real YouTube source on screen, so the player occupies its area.
+      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().click();
+      const dialog = page.getByRole('dialog');
+      await dialog.waitFor({ state: 'visible', timeout: 30_000 });
+      await dialog.getByRole('tab', { name: /Recommended/i }).click();
+      await dialog.getByRole('button', { name: /Trailer|Full movie/i }).first().click();
+      await dialog.waitFor({ state: 'hidden', timeout: 30_000 });
+
+      const viewportHeight = 844;
+      const pageHeightBefore = await page.evaluate(() => document.documentElement.scrollHeight);
+
+      // Flood the room with messages — the exact condition that used to grow it.
+      const composer = page.getByPlaceholder(/Message/i).first();
+      await composer.waitFor({ state: 'visible', timeout: 30_000 });
+      for (let i = 1; i <= 30; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await composer.fill(`message number ${i}`);
+        // eslint-disable-next-line no-await-in-loop
+        await composer.press('Enter');
+      }
+      await page.waitForTimeout(1200);
+
+      const after = await page.evaluate(() => {
+        const log = document.querySelector('[role="log"]');
+        const box = log ? log.getBoundingClientRect() : null;
+        return {
+          docScrollHeight: document.documentElement.scrollHeight,
+          docClientHeight: document.documentElement.clientHeight,
+          bodyScrollTop: document.body.scrollTop,
+          docScrollTop: document.documentElement.scrollTop,
+          logScrollHeight: log ? log.scrollHeight : 0,
+          logClientHeight: log ? log.clientHeight : 0,
+          logBottom: box ? box.bottom : 0,
+        };
+      });
+
+      // 1. The PAGE did not grow with the messages.
+      ok(
+        after.docScrollHeight <= viewportHeight + 2,
+        `page grew to ${after.docScrollHeight}px against a ${viewportHeight}px viewport`,
+      );
+      ok(after.docScrollHeight <= pageHeightBefore + 2, 'page height must not increase as messages arrive');
+      // 2. The page cannot be scrolled at all.
+      ok(after.docScrollTop === 0 && after.bodyScrollTop === 0, 'the document itself must not scroll');
+      // 3. The message list is the thing that overflows, and it stays on screen.
+      ok(after.logScrollHeight > after.logClientHeight, 'the message list should be the scroller');
+      ok(after.logBottom <= viewportHeight + 1, `message list bottom ${after.logBottom} is off screen`);
+
+      // 4. The composer and its send button are still visible.
+      await composer.waitFor({ state: 'visible', timeout: 5000 });
+      const composerBox = await composer.boundingBox();
+      ok(composerBox && composerBox.y + composerBox.height <= viewportHeight + 1, 'the composer must stay on screen');
+
+      // 5. A long message grows the textarea only to its cap, and the composer
+      //    still fits on screen.
+      await composer.fill('a very long message '.repeat(40));
+      await page.waitForTimeout(400);
+      const grown = await composer.boundingBox();
+      ok(grown && grown.height <= 140, `textarea grew to ${grown?.height}px — it must cap`);
+      ok(grown && grown.y + grown.height <= viewportHeight + 1, 'the composer must stay on screen while typing');
+      const pageAfterTyping = await page.evaluate(() => document.documentElement.scrollHeight);
+      ok(pageAfterTyping <= viewportHeight + 2, `typing grew the page to ${pageAfterTyping}px`);
+      await composer.fill('');
+
+      // 6. Scrolling the message list moves the LIST, not the page.
+      const scrolled = await page.evaluate(() => {
+        const log = document.querySelector('[role="log"]');
+        if (!log) return null;
+        log.scrollTop = 0;
+        return { logScrollTop: log.scrollTop, docScrollTop: document.documentElement.scrollTop };
+      });
+      ok(scrolled && scrolled.docScrollTop === 0, 'scrolling the chat must not scroll the page');
+
+      // 7. Switching to People and back leaves the composer visible.
+      const peopleTab = page.getByRole('tab', { name: /People/i }).first();
+      if (await peopleTab.count()) {
+        await peopleTab.click();
+        await page.waitForTimeout(400);
+        const chatTab = page.getByRole('tab', { name: /Chat/i }).first();
+        await chatTab.click();
+        await page.waitForTimeout(500);
+        await composer.waitFor({ state: 'visible', timeout: 5000 });
+        const back = await page.evaluate(() => document.documentElement.scrollHeight);
+        ok(back <= viewportHeight + 2, `page grew to ${back}px after switching tabs`);
+      }
+
+      /* ---- 8. no horizontal overflow, and a sideways swipe moves nothing ----
+         A stray left/right swipe while a film is playing used to shift the whole
+         layer and reveal hidden width. Nothing may be wider than the screen. */
+      const noWideOverflow = async (label) => {
+        const m = await page.evaluate(() => {
+          const root = document.querySelector('main')?.closest('div[class*="h-["]') || document.body;
+          const widest = [...document.querySelectorAll('body *')]
+            .map((el) => ({ w: el.getBoundingClientRect().right, tag: el.tagName }))
+            .sort((a, b) => b.w - a.w)[0];
+          return {
+            docScrollWidth: document.documentElement.scrollWidth,
+            bodyScrollWidth: document.body.scrollWidth,
+            innerWidth: window.innerWidth,
+            scrollX: window.scrollX,
+            rootScrollWidth: root.scrollWidth,
+            rootClientWidth: root.clientWidth,
+            widestRight: widest ? Math.round(widest.w) : 0,
+          };
+        });
+        ok(m.docScrollWidth <= m.innerWidth + 1, `${label}: document is ${m.docScrollWidth}px wide vs ${m.innerWidth}px viewport`);
+        ok(m.bodyScrollWidth <= m.innerWidth + 1, `${label}: body is ${m.bodyScrollWidth}px wide`);
+        ok(m.rootScrollWidth <= m.rootClientWidth + 1, `${label}: room root overflows (${m.rootScrollWidth} > ${m.rootClientWidth})`);
+        ok(m.scrollX === 0, `${label}: page is scrolled sideways to ${m.scrollX}`);
+        return m;
+      };
+
+      await noWideOverflow('after messages');
+
+      // A real horizontal drag across the player, then across the chat.
+      for (const y of [220, 600]) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(330, y);
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.down();
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(40, y, { steps: 12 });
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.up();
+      }
+      await page.waitForTimeout(500);
+      const afterSwipe = await noWideOverflow('after a sideways swipe');
+
+      // Long unbroken text must wrap, not widen the screen.
+      await composer.fill(`x${'y'.repeat(300)}`);
+      await composer.press('Enter');
+      await page.waitForTimeout(800);
+      await noWideOverflow('after a very long unbroken message');
+
+      return {
+        pageHeight: after.docScrollHeight,
+        viewportHeight,
+        listScrolls: after.logScrollHeight > after.logClientHeight,
+        pageWidth: afterSwipe.docScrollWidth,
+        scrollX: afterSwipe.scrollX,
+      };
+    } finally {
+      await ctx.close();
+      await demo.stop();
+    }
+  });
+
   return FILTER ? list.filter((s) => s.name.includes(FILTER)) : list;
 }
 

@@ -719,7 +719,9 @@ export function Chat({
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col lg:overflow-hidden">
+    // `overflow-hidden` at every size, not just desktop: the message list below
+    // is the only element allowed to scroll, on a phone as much as on a laptop.
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       {/* ---------- messages (the ONLY scrolling region) ---------- */}
       <div
         ref={listRef}
@@ -801,7 +803,13 @@ export function Chat({
       </AnimatePresence>
 
       {/* ---------- composer ---------- */}
-      <div className="relative min-w-0 shrink-0 border-t border-white/[0.07] p-3">
+      {/* `shrink-0` keeps the composer on screen no matter how long the message
+          list gets. The safe-area inset keeps it clear of the iOS home
+          indicator, which otherwise sits on top of the send button. */}
+      <div
+        className="relative min-w-0 shrink-0 border-t border-white/[0.07] p-3"
+        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+      >
         {/* Server refused this message (rate limit / oversized attachment).
             Only shown for real sends — never for typing, receipts or reactions. */}
         {sendError && (

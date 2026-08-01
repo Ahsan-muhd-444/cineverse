@@ -99,7 +99,13 @@
     font-feature-settings: 'ss01' 1, 'cv11' 1;
     text-rendering: optimizeLegibility;
     overflow-x: clip;
-    max-width: 100vw;
+    /* `100%`, never `100vw`: on a desktop page with a vertical scrollbar, 100vw
+       is WIDER than the content box by the scrollbar's width, so the very rule
+       meant to prevent sideways scrolling was creating a few pixels of it. */
+    max-width: 100%;
+    /* No sideways rubber-band anywhere in the app. Vertical overscroll is left
+       alone so pull-to-refresh still works on ordinary pages. */
+    overscroll-behavior-x: none;
   }
 
   /* Keyboard users get a clear ring; mouse users don't.

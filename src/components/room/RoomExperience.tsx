@@ -40,6 +40,7 @@ import { getSettings, saveProgress, setSettings, type AppSettings } from '@/lib/
 import { cn, copyToClipboard } from '@/lib/utils';
 import { connectedMemberIds } from '@/lib/rtc';
 import { useRoomUploader } from '@/hooks/useRoomUploader';
+import { useViewportLock } from '@/hooks/useViewportLock';
 import { PartnerUploadRow } from '@/components/room/SharedUploadProgress';
 import type { MediaSource } from '@/lib/types';
 
@@ -109,6 +110,9 @@ export function RoomExperience({ code }: { code: string }) {
   const toast = useToast();
 
   const room = useRoom(code, params.get('k') || undefined);
+  // The room is an app screen: the page behind it must not scroll, and the
+  // on-screen keyboard must shrink the room rather than hide the composer.
+  useViewportLock();
   const handleRef = React.useRef<PlayerHandle | null>(null);
 
   const [nameDraft, setNameDraft] = React.useState('');
@@ -379,7 +383,23 @@ export function RoomExperience({ code }: { code: string }) {
         // Viewport-LOCKED on desktop so the room never grows with chat content —
         // the message list scrolls internally instead of the page. Mobile keeps
         // its natural min-h-dvh column (player on top, chat below).
-        'relative flex min-h-dvh flex-col transition-colors duration-500 lg:h-dvh lg:min-h-0 lg:overflow-hidden',
+        // The room is an APP SCREEN, not a document: locked to the visible
+        // viewport at every size. Mobile used to keep its natural `min-h-dvh`
+        // column, so a growing chat grew the PAGE — the composer scrolled off
+        // screen and the whole room stretched. `h-dvh` + `overflow-hidden` here,
+        // with `min-h-0` all the way down, makes the message list the only
+        // scroller on phones exactly as it already was on desktop.
+        // Height comes from `--room-viewport-h` (the VISUAL viewport, published by
+        // useViewportLock) so the on-screen keyboard shrinks the room instead of
+        // pushing the composer behind it. `100dvh` is the fallback where
+        // visualViewport is unavailable.
+        // `w-full max-w-full` + `overscroll-x-none`: the width is the phone's
+        // width, full stop. An accidental sideways swipe while a film is playing
+        // must move nothing — there is no hidden width to reveal and no
+        // horizontal rubber-band. Deliberately NO `touch-action` here: that would
+        // be inherited by the YouTube iframe and break dragging its seek bar,
+        // which is the only playback control a YouTube source has.
+        'relative flex h-[var(--room-viewport-h,100dvh)] w-full min-h-0 max-w-full flex-col overflow-hidden overscroll-x-none transition-colors duration-500',
         lightsOff ? 'bg-black' : 'bg-ink-950',
       )}
     >
@@ -507,7 +527,7 @@ export function RoomExperience({ code }: { code: string }) {
       )}
 
       {/* ---------- stage ---------- */}
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row lg:overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <main id="main" className="flex min-w-0 flex-none flex-col p-3 sm:p-5 lg:min-h-0 lg:flex-1 lg:justify-center">
           {/* Reserve derived from measurement, not guesswork. At 1440x900:
                 header 69 + stage padding 40 + under-player row 56 = 165px of
@@ -740,10 +760,12 @@ export function RoomExperience({ code }: { code: string }) {
 
                 <div
                   className={cn(
-                    // min-h keeps a usable height on short mobile viewports; on
-                    // desktop min-h-0 + overflow-hidden bounds it so the Chat's
-                    // own message list is the only thing that scrolls.
-                    'min-h-[22rem] flex-1 lg:min-h-0 lg:overflow-hidden',
+                    // `min-h-0` + `overflow-hidden` at EVERY size, so the Chat's
+                    // own message list is the only thing that scrolls. The old
+                    // `min-h-[22rem]` floor was what let a busy chat push the
+                    // panel past the bottom of a phone screen and take the
+                    // composer with it.
+                    'min-h-0 flex-1 overflow-hidden',
                     panel === 'chat' ? 'flex flex-col' : 'hidden',
                   )}
                 >
@@ -760,7 +782,9 @@ export function RoomExperience({ code }: { code: string }) {
 
                 <div
                   className={cn(
-                    'min-h-[22rem] flex-1 overflow-y-auto lg:min-h-0',
+                    // Same rule for the People tab: bounded, and it scrolls
+                    // internally rather than growing the screen.
+                    'min-h-0 flex-1 overflow-y-auto overscroll-contain',
                     panel === 'people' ? 'block' : 'hidden',
                   )}
                 >
