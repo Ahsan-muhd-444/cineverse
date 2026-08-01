@@ -39,6 +39,15 @@ const MIB = 1024 * 1024;
 const FIXTURE_BYTES = 17 * MIB;
 const PART_COUNT = 3;
 
+/**
+ * Timeout scale for slow machines. The stress assertions test for LEAKS — that
+ * the pipeline goes quiescent and nothing is left behind — not for speed, so a
+ * longer deadline on a 2-core CI runner does not weaken a single one of them.
+ * It only stops a slow box from being reported as a leak. Identity locally.
+ */
+const TIMEOUT_SCALE = Number(process.env.BROWSER_TEST_TIMEOUT_SCALE) || (process.env.CI ? 3 : 1);
+const SLOW = (ms) => Math.round(ms * TIMEOUT_SCALE);
+
 const ARGS = process.argv.slice(2);
 const HEADED = ARGS.includes('--headed');
 const STRESS = ARGS.includes('--stress');
@@ -337,7 +346,7 @@ async function assertQuiescent(page, origin, label) {
         dbg.pendingTimers === 0
       );
     },
-    { timeout: 40_000, label: `${label}: quiescence` },
+    { timeout: SLOW(40_000), label: `${label}: quiescence` },
   );
 
   // Confirm each counter explicitly so a failure names exactly what leaked.
@@ -362,15 +371,15 @@ async function assertQuiescent(page, origin, label) {
 }
 
 async function joinRoom(page, code, name) {
-  await page.goto(`${APP}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+  await page.goto(`${APP}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: SLOW(90_000) });
   const nameField = page.getByPlaceholder('Your name');
-  await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+  await nameField.waitFor({ state: 'visible', timeout: SLOW(90_000) });
   await nameField.fill(name);
   await page.getByRole('button', { name: 'Take my seat' }).click();
   await page
     .getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ })
     .first()
-    .waitFor({ timeout: 90_000 });
+    .waitFor({ timeout: SLOW(90_000) });
 }
 
 async function openLocalTab(page) {
@@ -515,7 +524,7 @@ function scenarios({ browser, bucket }) {
       await selectFixture(uploader);
 
       const bar = progressBar(uploader);
-      await bar.waitFor({ state: 'visible', timeout: 60_000 });
+      await bar.waitFor({ state: 'visible', timeout: SLOW(60_000) });
       eq(await bar.getAttribute('aria-valuemin'), '0', 'aria-valuemin');
       eq(await bar.getAttribute('aria-valuemax'), String(FIXTURE_BYTES), 'aria-valuemax');
       const valueText = await bar.getAttribute('aria-valuetext');
@@ -525,7 +534,7 @@ function scenarios({ browser, bucket }) {
 
       // The partner sees progress WITHOUT the uploader's speed or ETA.
       const partnerText = await waitForText(partner.locator('body'), /Uploader is uploading/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'partner progress row',
       });
       ok(!/\d+(\.\d+)?\s*[KMG]B\/s/.test(partnerText), 'partner must not see a speed');
@@ -568,7 +577,7 @@ function scenarios({ browser, bucket }) {
       // Each PUT reaches the provider (the part is stored) but the browser cannot
       // read the ETag → MISSING_ETAG. Under the item-4 fix this is RESUMABLE, so
       // the panel keeps the session and offers Try again — not a dead end.
-      await waitForText(dialog, /ETag header|didn.t return an ETag/i, { timeout: 90_000, label: 'MISSING_ETAG copy' });
+      await waitForText(dialog, /ETag header|didn.t return an ETag/i, { timeout: SLOW(90_000), label: 'MISSING_ETAG copy' });
       await waitForText(dialog, /Try again/i, { timeout: 20_000, label: 'retryable affordance' });
       eq((await bucketInspect(origin)).objects.length, 0, 'nothing is published while ETags are unreadable');
       eq((await readProbe(page)).totalPutXhr, PART_COUNT, 'every part reached the provider once');
@@ -604,7 +613,7 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, freshRoom('PR'), 'Pauser');
       await openLocalTab(page);
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
 
       const dialog = page.getByRole('dialog');
       await dialog.getByRole('button', { name: 'Pause' }).click();
@@ -676,7 +685,7 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, freshRoom('CX'), 'Canceller');
       await openLocalTab(page);
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
       await page.getByRole('dialog').getByRole('button', { name: /Cancel upload|Cancel/ }).first().click();
       await page.getByText('Choose a video from this device').waitFor({ timeout: 30_000 });
       await page.waitForTimeout(800);
@@ -703,23 +712,23 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, freshRoom('OF'), 'Offliner');
       await openLocalTab(page);
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
       // Wait until it is ACTIVELY uploading (a part in flight), not merely
       // 'Starting…' — otherwise going offline during intent leaves the engine in
       // a state with no reconnecting affordance to assert.
       await waitForText(page.getByRole('dialog'), /Uploading…|of 3 parts/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'active upload',
       });
 
       await ctx.setOffline(true);
       await waitForText(page.getByRole('dialog'), /Reconnecting|network problem|Paused/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'offline state copy',
       });
       await ctx.setOffline(false);
       try {
-        await page.getByRole('dialog').waitFor({ state: 'hidden', timeout: 90_000 });
+        await page.getByRole('dialog').waitFor({ state: 'hidden', timeout: SLOW(90_000) });
       } catch {
         const panel = (await page.getByRole('dialog').innerText().catch(() => '(gone)')).replace(/\s+/g, ' ').slice(0, 300);
         const ins = await bucketInspect(origin);
@@ -749,7 +758,7 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, code, 'Refresher');
       await openLocalTab(page);
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
       await page.waitForTimeout(1200); // parts are still in flight at slow=4000ms
 
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -760,7 +769,7 @@ function scenarios({ browser, bucket }) {
        * hydration race that a single isVisible() check loses.
        */
       await waitForText(page.locator('body'), /Who is arriving\?|Choose what to watch|Choose a film/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'post-reload shell',
       });
       const nameField = page.getByPlaceholder('Your name');
@@ -769,14 +778,14 @@ function scenarios({ browser, bucket }) {
         await page.getByRole('button', { name: 'Take my seat' }).click();
       }
       await waitForText(page.locator('body'), /Choose what to watch|Choose a film|Change film/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'room after rejoin',
       });
 
       // The recovery card must be visible BEFORE choosing a file — the whole
       // point of the room-scoped controller.
       const dialog = await openLocalTab(page);
-      await waitForText(dialog, /Resume upload of|already uploaded/i, { timeout: 40_000, label: 'recovery card' });
+      await waitForText(dialog, /Resume upload of|already uploaded/i, { timeout: SLOW(40_000), label: 'recovery card' });
 
       // A DIFFERENT file is rejected and the session stays resumable.
       await selectFixture(page, { name: 'other.mp4' });
@@ -812,7 +821,7 @@ function scenarios({ browser, bucket }) {
       const dialog = await openLocalTab(page);
       await selectFixture(page);
       const bar = progressBar(page);
-      await bar.waitFor({ state: 'visible', timeout: 60_000 });
+      await bar.waitFor({ state: 'visible', timeout: SLOW(60_000) });
 
       eq(await bar.getAttribute('role'), 'progressbar', 'role');
       eq(await bar.getAttribute('aria-valuemin'), '0', 'aria-valuemin');
@@ -855,7 +864,7 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, freshRoom('LT'), 'Later');
       await openLocalTab(page);
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
 
       // While the upload runs, choose a YouTube source instead.
       const dialog = page.getByRole('dialog');
@@ -888,7 +897,7 @@ function scenarios({ browser, bucket }) {
       const dialog = await openLocalTab(page);
 
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
       await dialog.getByRole('button', { name: /Cancel upload|Cancel/ }).first().click();
       // The chooser returns only once the cancel is ACKNOWLEDGED (phase 'cancelled'),
       // which — now that the server tombstones atomically before provider I/O — means
@@ -988,7 +997,7 @@ function scenarios({ browser, bucket }) {
 
       // Below the single-shot ceiling (4 MiB in the test stack) → one PUT, no parts.
       await selectFixture(page, { size: 2 * MIB });
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
       await dialog.getByRole('button', { name: /Cancel upload|Cancel/ }).first().click();
       await page.getByText('Choose a video from this device').waitFor({ timeout: 30_000 });
       eq((await bucketInspect(origin)).objects.length, 0, 'a cancelled single upload publishes nothing');
@@ -1016,7 +1025,7 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, freshRoom('RJ'), 'Rejected');
       const dialog = await openLocalTab(page);
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
 
       // Arm a one-shot abort refusal, then click Cancel: the server answers
       // {ok:false, RATE_LIMITED}. The request RESOLVES, but the cancel did NOT
@@ -1074,13 +1083,13 @@ function scenarios({ browser, bucket }) {
       ok(await fetch(`${APP}/__test__/abort-fault`, { method: 'POST' }).then((r) => r.ok), 'abort fault armed');
 
       await selectFixture(page);
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
 
       // The completion fails terminally; the client's abort is refused → a
       // retry-cancel is shown, the chooser stays hidden, and the session is STILL
       // active (registry + provider). Observable predicates, no fixed sleep.
       await waitForText(dialog, /still being cancelled|Retry cancel/i, {
-        timeout: 90_000,
+        timeout: SLOW(90_000),
         label: 'client-terminal cleanup (retry-cancel) state',
       });
       ok(
@@ -1126,7 +1135,7 @@ function scenarios({ browser, bucket }) {
       await joinRoom(page, code, 'SingleRefresh');
       await openLocalTab(page);
       await selectFixture(page, { size: 2 * MIB }); // below the single-shot ceiling
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
       await waitForCondition(async () => (await testUploads()).activeSessions >= 1, {
         timeout: 10_000,
         label: 'the single session is active before the refresh',
@@ -1139,7 +1148,7 @@ function scenarios({ browser, bucket }) {
       // cleanup record does not — the only token that can close the session.
       await page.reload({ waitUntil: 'domcontentloaded' });
       await waitForText(page.locator('body'), /Who is arriving\?|Choose what to watch|Choose a film|Change film/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'post-reload shell',
       });
       const nameField = page.getByPlaceholder('Your name');
@@ -1148,7 +1157,7 @@ function scenarios({ browser, bucket }) {
         await page.getByRole('button', { name: 'Take my seat' }).click();
       }
       await waitForText(page.locator('body'), /Choose what to watch|Choose a film|Change film/i, {
-        timeout: 60_000,
+        timeout: SLOW(60_000),
         label: 'room after rejoin',
       });
 
@@ -1157,7 +1166,7 @@ function scenarios({ browser, bucket }) {
       // is still active — the token remains controllable across the remount.
       const dialog = await openLocalTab(page);
       await waitForText(dialog, /still being cancelled|Retry cancel/i, {
-        timeout: 40_000,
+        timeout: SLOW(40_000),
         label: 'refused single cleanup (retry-cancel) after refresh',
       });
       ok(
@@ -1175,7 +1184,7 @@ function scenarios({ browser, bucket }) {
           if (await btn.isVisible().catch(() => false)) await btn.click().catch(() => {});
           return false;
         },
-        { timeout: 60_000, label: 'the leftover single session is closed on retry' },
+        { timeout: SLOW(60_000), label: 'the leftover single session is closed on retry' },
       );
       await page.getByText('Choose a video from this device').waitFor({ timeout: 30_000 });
 
@@ -1224,15 +1233,15 @@ function demoScenarios({ browser }) {
 
     /** Join a room on the DEMO origin (the shared helper is bound to APP). */
     const joinDemoRoom = async (page, name) => {
-      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: SLOW(90_000) });
       const nameField = page.getByPlaceholder('Your name');
-      await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+      await nameField.waitFor({ state: 'visible', timeout: SLOW(90_000) });
       await nameField.fill(name);
       await page.getByRole('button', { name: 'Take my seat' }).click();
       await page
         .getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ })
         .first()
-        .waitFor({ timeout: 90_000 });
+        .waitFor({ timeout: SLOW(90_000) });
     };
 
     try {
@@ -1317,12 +1326,12 @@ function demoScenarios({ browser }) {
     const code = `MOB${Math.floor(Math.random() * 900 + 100)}`;
 
     try {
-      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: SLOW(90_000) });
       const nameField = page.getByPlaceholder('Your name');
-      await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+      await nameField.waitFor({ state: 'visible', timeout: SLOW(90_000) });
       await nameField.fill('Phone');
       await page.getByRole('button', { name: 'Take my seat' }).click();
-      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().waitFor({ timeout: 90_000 });
+      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().waitFor({ timeout: SLOW(90_000) });
 
       // Put a real YouTube source on screen, so the player occupies its area.
       await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().click();
@@ -1516,12 +1525,12 @@ function demoScenarios({ browser }) {
       });
 
     try {
-      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: SLOW(90_000) });
       const nameField = page.getByPlaceholder('Your name');
-      await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+      await nameField.waitFor({ state: 'visible', timeout: SLOW(90_000) });
       await nameField.fill('Phone');
       await page.getByRole('button', { name: 'Take my seat' }).click();
-      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().waitFor({ timeout: 90_000 });
+      await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().waitFor({ timeout: SLOW(90_000) });
 
       await page.getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ }).first().click();
       const dialog = page.getByRole('dialog');
@@ -1757,15 +1766,15 @@ function demoScenarios({ browser }) {
       const b = await ctxB.newPage();
 
       const joinDemoRoom = async (page, name) => {
-        await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+        await page.goto(`${demo.origin}/room/${code}`, { waitUntil: 'domcontentloaded', timeout: SLOW(90_000) });
         const nameField = page.getByPlaceholder('Your name');
-        await nameField.waitFor({ state: 'visible', timeout: 90_000 });
+        await nameField.waitFor({ state: 'visible', timeout: SLOW(90_000) });
         await nameField.fill(name);
         await page.getByRole('button', { name: 'Take my seat' }).click();
         await page
           .getByRole('button', { name: /Choose what to watch|Choose a film|Change film/ })
           .first()
-          .waitFor({ timeout: 90_000 });
+          .waitFor({ timeout: SLOW(90_000) });
       };
 
       /** Everything this page is really receiving, read from the page itself. */
@@ -1907,7 +1916,7 @@ function demoScenarios({ browser }) {
           await page
             .locator('aside[aria-label="Room side panel"]')
             .getByRole('tab', { name: /People · 2/ })
-            .waitFor({ state: 'visible', timeout: 60_000 });
+            .waitFor({ state: 'visible', timeout: SLOW(60_000) });
         }
         evidence.step1 = 'both pages reached the room UI and see 2 members';
 
@@ -1917,7 +1926,7 @@ function demoScenarios({ browser }) {
         evidence.step2 = 'A clicked the Voice control; the dock switched to its in-call controls (End call visible)';
 
         /* ---- 3. B is really receiving A's voice ---- */
-        const bAudio = await awaitRemoteMedia(b, 'audio', "B receives A's voice", { timeout: 60_000, audible: true });
+        const bAudio = await awaitRemoteMedia(b, 'audio', "B receives A's voice", { timeout: SLOW(60_000), audible: true });
         eq(bAudio.tracks.length, 1, "B's live remote audio tracks");
         const bSink = bAudio.tracks[0].sinks.find((s) => s.tag === 'audio' && s.muted === false);
         ok(bSink, `B's remote audio is on no unmuted <audio> sink: ${JSON.stringify(bAudio.tracks[0].sinks)}`);
@@ -1931,7 +1940,7 @@ function demoScenarios({ browser }) {
         else await b.getByRole('button', { name: 'Voice', exact: true }).click();
         await b.getByRole('button', { name: 'End call', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
 
-        const aAudio = await awaitRemoteMedia(a, 'audio', "A receives B's voice", { timeout: 60_000, audible: true });
+        const aAudio = await awaitRemoteMedia(a, 'audio', "A receives B's voice", { timeout: SLOW(60_000), audible: true });
         eq(aAudio.tracks.length, 1, "A's live remote audio tracks");
         const aSink = aAudio.tracks[0].sinks.find((s) => s.tag === 'audio' && s.muted === false);
         ok(aSink, `A's remote audio is on no unmuted <audio> sink: ${JSON.stringify(aAudio.tracks[0].sinks)}`);
@@ -1940,7 +1949,7 @@ function demoScenarios({ browser }) {
         /* ---- 5. A turns the camera on; B receives real video ---- */
         await a.getByRole('button', { name: 'Turn camera on', exact: true }).click();
         await a.getByRole('button', { name: 'Turn camera off', exact: true }).waitFor({ state: 'visible', timeout: 45_000 });
-        const bVideo = await awaitRemoteMedia(b, 'video', "B receives A's camera", { timeout: 60_000 });
+        const bVideo = await awaitRemoteMedia(b, 'video', "B receives A's camera", { timeout: SLOW(60_000) });
         eq(bVideo.tracks.length, 1, "B's live remote video tracks");
         ok(bVideo.stats.video.framesDecoded > 0, 'B decoded no video frames at all');
         // The camera clip is 320 wide. Pin it, so the screen-share step below can
@@ -1977,7 +1986,7 @@ function demoScenarios({ browser }) {
               stats.video.frameWidth > bVideo.stats.video.frameWidth
             );
           },
-          { timeout: 60_000, label: "B decodes A's screen (frame size grows past the camera clip)" },
+          { timeout: SLOW(60_000), label: "B decodes A's screen (frame size grows past the camera clip)" },
         );
         const shareSnap = await mediaSnapshot(b);
         eq(remoteLive(shareSnap, 'video').length, 1, "B's live remote video tracks while A shares");
@@ -2109,7 +2118,7 @@ function stressScenarios({ browser, bucket }) {
       const dialog = await openLocalTab(page);
       for (let i = 0; i < 20; i += 1) {
         await selectFixture(page);
-        await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+        await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
         await dialog.getByRole('button', { name: /Cancel upload|Cancel/ }).first().click();
         // Observable predicate, NOT a fixed settle: the chooser reappears only after
         // the cancel is acknowledged and the slot is freed.
@@ -2134,7 +2143,7 @@ function stressScenarios({ browser, bucket }) {
       const dialog = await openLocalTab(page);
       // A larger fixture (6 parts) so there is real work across 10 cycles.
       await selectFixture(page, { size: 48 * MIB });
-      await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+      await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
 
       // Enter paused, then toggle resume/pause 10 times. Pausing after ~120ms keeps
       // a 700ms part from completing, so the cycles run without racing completion.
@@ -2207,7 +2216,7 @@ function stressScenarios({ browser, bucket }) {
       for (let i = 0; i < 10; i += 1) {
         const dialog = await openLocalTab(page);
         await selectFixture(page);
-        await progressBar(page).waitFor({ state: 'visible', timeout: 60_000 });
+        await progressBar(page).waitFor({ state: 'visible', timeout: SLOW(60_000) });
         // Pause → deterministic mid-upload (session persisted, nothing in flight),
         // then reload: the persisted session must recover BEFORE a file is chosen.
         await dialog.getByRole('button', { name: 'Pause' }).click().catch(() => {});
@@ -2215,7 +2224,7 @@ function stressScenarios({ browser, bucket }) {
         await page.reload({ waitUntil: 'domcontentloaded' });
 
         await waitForText(page.locator('body'), /Who is arriving\?|Choose what to watch|Choose a film|Change film/i, {
-          timeout: 60_000,
+          timeout: SLOW(60_000),
           label: `post-reload shell #${i + 1}`,
         });
         const nameField = page.getByPlaceholder('Your name');
@@ -2224,12 +2233,12 @@ function stressScenarios({ browser, bucket }) {
           await page.getByRole('button', { name: 'Take my seat' }).click();
         }
         await waitForText(page.locator('body'), /Choose what to watch|Choose a film|Change film/i, {
-          timeout: 60_000,
+          timeout: SLOW(60_000),
           label: `room after rejoin #${i + 1}`,
         });
 
         const dlg = await openLocalTab(page);
-        await waitForText(dlg, /Resume upload of|already uploaded/i, { timeout: 40_000, label: `recovery card #${i + 1}` });
+        await waitForText(dlg, /Resume upload of|already uploaded/i, { timeout: SLOW(40_000), label: `recovery card #${i + 1}` });
         await selectFixture(page); // the SAME file → resume → complete
         await dlg.waitFor({ state: 'hidden', timeout: 120_000 });
       }

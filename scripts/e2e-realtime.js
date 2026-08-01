@@ -1718,15 +1718,33 @@ async function main() {
   );
   reborn.disconnect();
   await departure;
-  // A short settle window ON TOP, so a DUPLICATE removal would still be seen.
-  // Waiting longer here can only make the exactly-once assertion stricter.
+  /*
+   * The announcement and the removal are not the same instant. On a loaded
+   * runner the system message can land while `departRoom` is still finishing,
+   * and asserting on a FIXED window after it measured whatever happened to be
+   * true by an arbitrary deadline — CI failed here with occupants=2, left=0.
+   * Poll the server's own view until the seat is really gone, bounded generously
+   * off the grace window rather than a magic number.
+   */
+  const removalDeadline = Date.now() + GRACE_MS * 4 + 5000;
+  let occupantsNow = null;
+  while (Date.now() < removalDeadline) {
+    // eslint-disable-next-line no-await-in-loop
+    const probe = await emit(hostAgain, 'room:probe', { code: seatCode });
+    occupantsNow = probe && probe.occupants;
+    if (occupantsNow === 1) break;
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(150);
+  }
+  // A settle window ON TOP, so a DUPLICATE removal would still be seen. Waiting
+  // longer here can only make the exactly-once assertion stricter.
   await sleep(300);
   hostAgain.off('message', countExpired);
   const afterExpiry = await emit(hostAgain, 'sync:request', null);
   check('(seat) after grace expires the member is removed exactly once', expiredLeft === 1, `left=${expiredLeft}`);
   const probeAfter = await emit(hostAgain, 'room:probe', { code: seatCode });
   check('(seat) the room is down to one member after expiry', probeAfter && probeAfter.occupants === 1,
-    probeAfter && `occupants=${probeAfter.occupants}`);
+    probeAfter && `occupants=${probeAfter.occupants} (last polled ${occupantsNow})`);
   check('(seat) the surviving member still has authority', afterExpiry !== null);
 
   /* ---- explicit leave is immediate (no grace) ---- */
